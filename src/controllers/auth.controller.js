@@ -8,6 +8,10 @@ export async function signup(req, res) {
   res.status(201).json(await auth.signup(req.body));
 }
 
+export async function logout(req, res) {
+  res.json(await auth.logout(req.user));
+}
+
 export async function me(req, res) {
   res.json(await auth.me(req.user));
 }

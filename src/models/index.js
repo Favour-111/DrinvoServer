@@ -21,3 +21,4 @@ export { Customer, CreditAccount, CreditPayment } from './Customer.js';
 export { Return, ReturnItem, Refund } from './Return.js';
 export { StockAdjustment } from './StockAdjustment.js';
 export { AuditLog } from './AuditLog.js';
+export { StaffInvitation } from './StaffInvitation.js';

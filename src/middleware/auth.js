@@ -4,6 +4,7 @@ import { User, Shop, Business } from '../models/index.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { can } from '../config/roles.js';
+import { checkStaffAccess } from '../utils/staffAccess.js';
 
 export function signToken(user) {
   return jwt.sign({ sub: String(user._id), role: user.role }, env.jwtSecret, { expiresIn: env.jwtExpiresIn });
@@ -53,6 +54,10 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
   if (!auth || !auth.business) throw ApiError.unauthorized();
   const { user } = auth;
   if (user.status !== 'ACTIVE') throw ApiError.unauthorized('This account has been deactivated.');
+  if (user.role === 'STAFF') {
+    const gate = checkStaffAccess(auth.business);
+    if (!gate.allowed) throw ApiError.unauthorized(gate.reason);
+  }
   if (user.passwordChangedAt && payload.iat * 1000 < new Date(user.passwordChangedAt).getTime() - 1000) {
     throw ApiError.unauthorized('Your password was changed. Please sign in again.');
   }

@@ -18,15 +18,16 @@ export const updateMeSchema = z.object({
   name: text(120).min(2).optional(),
   phone: text(40).optional(),
 });
-export const businessIdParam = z.object({ businessId: objectId });
+export const inviteTokenParam = z.object({ token: z.string().trim().min(10).max(128) });
 export const staffSignupSchema = z.object({
-  businessId: objectId,
+  token: z.string().trim().min(10).max(128),
   name: text(120).min(2, 'Enter your name'),
   email: z.string().trim().toLowerCase().email('Enter a valid email'),
   phone: optionalText(40),
   password: z.string().min(8, 'Use at least 8 characters').max(200),
   shopId: objectId.optional(),
 });
+export const invitationCreateSchema = z.object({ shopId: objectId.optional() });
 
 /* ---------- business & shops ---------- */
 export const businessUpdateSchema = z.object({
@@ -36,6 +37,15 @@ export const businessUpdateSchema = z.object({
   showStaffOnReceipt: z.boolean().optional(),
   timezone: text(60).optional(),
   categories: z.array(text(60).min(1)).max(50).optional(),
+  staffAccess: z
+    .object({
+      shutdown: z.boolean().optional(),
+      scheduleEnabled: z.boolean().optional(),
+      start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM').optional(),
+      end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM').optional(),
+      days: z.array(z.boolean()).length(7).optional(),
+    })
+    .optional(),
 });
 export const shopSchema = z.object({
   name: text(120).min(2, 'Enter a shop name'),

@@ -17,6 +17,7 @@ import * as suppliers from '../services/supplier.service.js';
 import * as staff from '../services/staff.service.js';
 import * as reports from '../services/report.service.js';
 import * as audit from '../services/audit.service.js';
+import * as invitations from '../services/invitation.service.js';
 
 /* ---------- business & shops ---------- */
 export const businessCtrl = {
@@ -25,7 +26,14 @@ export const businessCtrl = {
   listShops: async (req, res) => res.json(await business.listShops(req.ctx)),
   createShop: async (req, res) => res.status(201).json(await business.createShop(req.ctx, req.body)),
   updateShop: async (req, res) => res.json(await business.updateShop(req.ctx, req.params.id, req.body)),
-  public: async (req, res) => res.json(await business.getPublicBusiness(req.params.businessId)),
+};
+
+/* ---------- staff invitations ---------- */
+export const invitationCtrl = {
+  list: async (req, res) => res.json(await invitations.listInvitations(req.ctx)),
+  create: async (req, res) => res.status(201).json(await invitations.createInvitation(req.ctx, req.body)),
+  revoke: async (req, res) => res.json(await invitations.revokeInvitation(req.ctx, req.params.id)),
+  public: async (req, res) => res.json(await invitations.getPublicInvitation(req.params.token)),
 };
 
 /* ---------- products ---------- */

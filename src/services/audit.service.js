@@ -19,10 +19,16 @@ export async function logAudit(ctx, entry, tx) {
   return AuditLog.create(data);
 }
 
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export async function listAudit(ctx, query) {
   const { page, limit, skip } = pageParams(query, { defaultLimit: 50 });
-  const filter = { businessId: ctx.businessId, $or: [{ shopId: ctx.shopId }, { shopId: null }] };
+  const filter = { businessId: ctx.businessId, $and: [{ $or: [{ shopId: ctx.shopId }, { shopId: null }] }] };
   if (query.category && query.category !== 'all') filter.category = query.category;
+  if (query.q) {
+    const re = new RegExp(escapeRegex(query.q), 'i');
+    filter.$and.push({ $or: [{ summary: re }, { target: re }, { detail: re }] });
+  }
   const [items, total] = await Promise.all([
     AuditLog.aggregate([
       { $match: filter },

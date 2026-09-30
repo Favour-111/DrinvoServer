@@ -13,6 +13,7 @@ import {
   businessCtrl,
   customerCtrl,
   inventoryCtrl,
+  invitationCtrl,
   productCtrl,
   purchaseCtrl,
   reportCtrl,
@@ -29,11 +30,12 @@ const auth = Router();
 auth.post('/login', loginLimiter, validate({ body: v.loginSchema }), h(authCtrl.login));
 auth.post('/signup', signupLimiter, validate({ body: v.staffSignupSchema }), h(authCtrl.signup));
 auth.get('/me', authenticate, h(authCtrl.me));
+auth.post('/logout', authenticate, h(authCtrl.logout));
 auth.post('/change-password', authenticate, validate({ body: v.changePasswordSchema }), h(authCtrl.changePassword));
 api.use('/auth', auth);
 
-// Lets the signup page show the business name and its shop(s) before anyone signs in
-api.get('/signup/:businessId', validate({ params: v.businessIdParam }), h(businessCtrl.public));
+// Lets the signup page show the business name and shop(s) for a one-time invitation link, before anyone signs in
+api.get('/invite/:token', validate({ params: v.inviteTokenParam }), h(invitationCtrl.public));
 
 /* Everything below needs a signed-in user and a shop */
 api.use(authenticate, shopContext, stockBroadcast);
@@ -100,6 +102,10 @@ api.post('/credit/payments', need(P.CREDIT_MANAGE), validate({ body: v.creditPay
 /* ---------- staff ---------- */
 api.get('/staff', need(P.STAFF_MANAGE), h(staffCtrl.list));
 api.post('/staff', need(P.STAFF_MANAGE), validate({ body: v.staffCreateSchema }), h(staffCtrl.create));
+// Must come before /staff/:id — otherwise Express matches "invitations" as an :id.
+api.get('/staff/invitations', need(P.STAFF_MANAGE), h(invitationCtrl.list));
+api.post('/staff/invitations', need(P.STAFF_MANAGE), validate({ body: v.invitationCreateSchema }), h(invitationCtrl.create));
+api.post('/staff/invitations/:id/revoke', need(P.STAFF_MANAGE), id, h(invitationCtrl.revoke));
 api.get('/staff/:id', need(P.STAFF_MANAGE), id, h(staffCtrl.get));
 api.patch('/staff/:id', need(P.STAFF_MANAGE), id, validate({ body: v.staffUpdateSchema }), h(staffCtrl.update));
 api.post('/staff/:id/deactivate', need(P.STAFF_MANAGE), id, h(staffCtrl.deactivate));

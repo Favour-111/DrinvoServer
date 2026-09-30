@@ -11,6 +11,13 @@ const businessSchema = new Schema(
     receiptFooter: { type: String, default: 'Thank you for your purchase!', maxlength: 200 },
     showStaffOnReceipt: { type: Boolean, default: true },
     categories: { type: [String], default: DEFAULT_CATEGORIES },
+    staffAccess: {
+      shutdown: { type: Boolean, default: false },
+      scheduleEnabled: { type: Boolean, default: false },
+      start: { type: String, default: '09:00' },
+      end: { type: String, default: '21:00' },
+      days: { type: [Boolean], default: () => [true, true, true, true, true, true, true] },
+    },
   },
   baseOptions()
 );
