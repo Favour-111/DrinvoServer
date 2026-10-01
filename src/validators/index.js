@@ -170,6 +170,9 @@ const saleShape = {
   customer: z.object({ name: text(120).min(2, 'Enter the customer name'), phone }).optional(),
   amountPaid: money.optional(),
   paidWith: z.enum(['CASH', 'POS', 'TRANSFER']).optional(),
+  // Logging a past sale (e.g. migrating paper records): backdates the sale, its stock
+  // deduction and its payment to this date instead of now. Omitted for a normal, live sale.
+  backdatedAt: z.coerce.date().optional(),
 };
 function requireCustomerAndPart(v, ctx) {
   if (v.paymentMethod === 'PART') {
@@ -178,6 +181,9 @@ function requireCustomerAndPart(v, ctx) {
   }
   if (!v.customerId && !v.customer) {
     ctx.addIssue({ code: 'custom', path: ['customer'], message: 'Enter the customer’s name and phone number' });
+  }
+  if (v.backdatedAt && v.backdatedAt.getTime() > Date.now() + 5 * 60 * 1000) {
+    ctx.addIssue({ code: 'custom', path: ['backdatedAt'], message: 'Sale date can’t be in the future' });
   }
 }
 export const saleCreateSchema = z.object(saleShape).superRefine(requireCustomerAndPart);

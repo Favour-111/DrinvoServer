@@ -35,7 +35,7 @@ export function stockStatus(quantity, threshold) {
  * Returns { inventory, movement, unitCost } where unitCost is the average
  * cost per bottle before this change (the cost basis for a sale).
  */
-export async function applyMovement(ctx, tx, { variant, delta, type, restockTotal = null, ref = null, reason = '' }) {
+export async function applyMovement(ctx, tx, { variant, delta, type, restockTotal = null, ref = null, reason = '', date = null }) {
   if (!delta) throw new Error('applyMovement requires a non-zero delta');
   const filter = { shopId: ctx.shopId, productVariantId: variant._id };
   const opts = { new: true, session: tx.session };
@@ -108,6 +108,7 @@ export async function applyMovement(ctx, tx, { variant, delta, type, restockTota
       referenceNumber: ref?.number ?? '',
       performedBy: ctx.userId,
       reason,
+      ...(date ? { createdAt: date } : {}),
     },
     tx
   );

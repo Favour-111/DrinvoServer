@@ -18,6 +18,7 @@ export const P = {
   SUPPLIER_MANAGE: 'supplier:manage',
   CUSTOMER_LOOKUP: 'customer:lookup',
   CREDIT_MANAGE: 'credit:manage',
+  CREDIT_PAYMENT_RECORD: 'credit:payment:record',
   STAFF_MANAGE: 'staff:manage',
   REPORT_READ: 'report:read',
   AUDIT_READ: 'audit:read',
@@ -34,6 +35,7 @@ export const ROLE_PERMISSIONS = {
     P.SALE_CREATE,
     P.SALE_READ_OWN,
     P.CUSTOMER_LOOKUP,
+    P.CREDIT_PAYMENT_RECORD,
   ],
 };
 

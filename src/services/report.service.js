@@ -1,4 +1,4 @@
-import { CreditAccount, InventoryMovement, ProductVariant, Refund, Return, Sale, SaleItem } from '../models/index.js';
+import { CreditAccount, CreditPayment, InventoryMovement, ProductVariant, Refund, Return, Sale, SaleItem } from '../models/index.js';
 import { MOVEMENT_TYPES } from '../config/constants.js';
 import { resolveRange } from '../utils/dates.js';
 import { stockRows, summarize } from './inventory.service.js';
@@ -105,6 +105,17 @@ function categoryShare(products) {
     .sort((a, b) => b.revenue - a.revenue);
 }
 
+/** Money actually taken in within [start, end), including part/credit payments collected
+ * today against sales made on earlier days — distinct from `saleTotals().revenue`, which
+ * books a credit sale's full amount on the day the sale happened, not when it's paid off. */
+async function creditCollected(ctx, start, end) {
+  const [row] = await CreditPayment.aggregate([
+    { $match: { shopId: ctx.shopId, method: { $ne: 'RETURN_CREDIT' }, createdAt: { $gte: start, $lt: end } } },
+    { $group: { _id: null, amount: { $sum: '$amount' } } },
+  ]);
+  return round2(row?.amount);
+}
+
 async function creditOutstanding(ctx) {
   const accounts = await CreditAccount.find({ shopId: ctx.shopId }).lean();
   return round2(accounts.reduce((s, a) => s + creditBalance(a), 0));
@@ -155,9 +166,11 @@ export async function dashboard(ctx, query) {
   const chartRange = resolveRange(query.range ? query : { range: '7d' }, tz);
 
   // Everything runs in parallel: one database round trip for the whole page (plus sale lines)
-  const [todayTotals, yesterdayTotals, points, chartTotals, rows, recentSales] = await Promise.all([
+  const [todayTotals, yesterdayTotals, todayCollected, yesterdayCollected, points, chartTotals, rows, recentSales] = await Promise.all([
     saleTotals(ctx, today.start, today.end),
     saleTotals(ctx, yesterday.start, yesterday.end),
+    creditCollected(ctx, today.start, today.end),
+    creditCollected(ctx, yesterday.start, yesterday.end),
     series(ctx, chartRange),
     saleTotals(ctx, chartRange.start, chartRange.end),
     stockRows(ctx),
@@ -166,8 +179,8 @@ export async function dashboard(ctx, query) {
   const saleItems = await SaleItem.find({ saleId: { $in: recentSales.map((s) => s._id) } }, 'saleId variantName unit quantity').lean();
 
   return {
-    today: todayTotals,
-    yesterday: yesterdayTotals,
+    today: { ...todayTotals, cashCollected: todayCollected },
+    yesterday: { ...yesterdayTotals, cashCollected: yesterdayCollected },
     inventory: summarize(rows),
     chart: { range: chartRange.range, granularity: chartRange.granularity, points, totals: chartTotals },
     lowStock: rows.filter((r) => r.status === 'low').sort((a, b) => a.quantity / (a.lowStockThreshold || 1) - b.quantity / (b.lowStockThreshold || 1)),

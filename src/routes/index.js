@@ -103,7 +103,7 @@ api.post('/customers', need(P.CREDIT_MANAGE), validate({ body: v.customerSchema 
 api.get('/customers/:id', need(P.CREDIT_MANAGE), id, h(customerCtrl.get));
 api.patch('/customers/:id', need(P.CREDIT_MANAGE), id, validate({ body: v.customerSchema.partial() }), h(customerCtrl.update));
 api.get('/credit/summary', need(P.CREDIT_MANAGE), h(customerCtrl.summary));
-api.post('/credit/payments', need(P.CREDIT_MANAGE), validate({ body: v.creditPaymentSchema }), h(customerCtrl.recordPayment));
+api.post('/credit/payments', need(P.CREDIT_PAYMENT_RECORD), validate({ body: v.creditPaymentSchema }), h(customerCtrl.recordPayment));
 
 /* ---------- staff ---------- */
 api.get('/staff', need(P.STAFF_MANAGE), h(staffCtrl.list));

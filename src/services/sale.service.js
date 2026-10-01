@@ -54,6 +54,11 @@ export async function createSale(ctx, input) {
     needByVariant.set(String(variant._id), (needByVariant.get(String(variant._id)) || 0) + baseQuantity);
   }
 
+  // Logging a past sale: everything it touches (the sale, its stock deduction, its payment)
+  // is dated to when it actually happened, not to now, so reports show it on the right day.
+  const occurredAt = input.backdatedAt ?? null;
+  const dated = occurredAt ? { createdAt: occurredAt, updatedAt: occurredAt } : {};
+
   // Part payment: some now, the rest on credit. Paying the whole bill is a normal sale.
   const saleTotal = lines.reduce((s, l) => s + l.lineTotal, 0);
   const isPart = input.paymentMethod === 'PART';
@@ -108,6 +113,7 @@ export async function createSale(ctx, input) {
         type: 'SALE',
         ref: { type: 'Sale', id: saleId, number: receiptNumber },
         reason: 'Sale',
+        date: occurredAt,
       });
       itemDocs.push({
         saleId,
@@ -128,6 +134,7 @@ export async function createSale(ctx, input) {
         lineTotal: l.lineTotal,
         unitCost,
         lineCost: Math.round(unitCost * l.baseQuantity * 100) / 100,
+        ...dated,
       });
     }
 
@@ -154,6 +161,7 @@ export async function createSale(ctx, input) {
         paymentMethod: input.paymentMethod,
         amountPaid: isPart ? input.amountPaid : input.paymentMethod === 'CREDIT' ? 0 : total,
         paidWith: isPart ? input.paidWith : null,
+        ...dated,
       },
       tx
     );
@@ -162,7 +170,7 @@ export async function createSale(ctx, input) {
     // 12. Payment records (Drinvo records the method; it never moves money).
     // A part payment is two records: the money taken now, and the amount put on credit.
     const payment = (method, amount) =>
-      createDoc(Payment, { businessId: ctx.businessId, shopId: ctx.shopId, kind: 'SALE', direction: 'IN', method, amount, saleId, customerId: buyer?._id ?? null, recordedBy: ctx.userId }, tx);
+      createDoc(Payment, { businessId: ctx.businessId, shopId: ctx.shopId, kind: 'SALE', direction: 'IN', method, amount, saleId, customerId: buyer?._id ?? null, recordedBy: ctx.userId, ...dated }, tx);
     if (isPart) {
       await payment(input.paidWith, input.amountPaid);
       await payment('CREDIT', total - input.amountPaid);
@@ -184,6 +192,7 @@ export async function createSale(ctx, input) {
             saleId,
             note: `Paid at sale ${receiptNumber}`,
             recordedBy: ctx.userId,
+            ...dated,
           },
           tx
         );
@@ -197,7 +206,7 @@ export async function createSale(ctx, input) {
         action: 'sale.completed',
         summary: 'completed sale',
         target: receiptNumber,
-        detail: `${naira(total)} · ${isPart ? `${naira(input.amountPaid)} ${METHOD_LABEL[input.paidWith]} now, ${naira(total - input.amountPaid)} owed` : METHOD_LABEL[input.paymentMethod]}${buyer ? ` · ${buyer.name}` : ''}${totalDiscount > 0 ? ` · ${naira(totalDiscount)} discount` : ''}`,
+        detail: `${naira(total)} · ${isPart ? `${naira(input.amountPaid)} ${METHOD_LABEL[input.paidWith]} now, ${naira(total - input.amountPaid)} owed` : METHOD_LABEL[input.paymentMethod]}${buyer ? ` · ${buyer.name}` : ''}${totalDiscount > 0 ? ` · ${naira(totalDiscount)} discount` : ''}${occurredAt ? ` · backdated to ${occurredAt.toDateString()}` : ''}`,
         entityType: 'Sale',
         entityId: saleId,
       },

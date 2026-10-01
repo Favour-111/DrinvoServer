@@ -96,8 +96,8 @@ export const saleCtrl = {
 export const customerCtrl = {
   list: async (req, res) => {
     const rows = await customers.listCustomers(req.ctx, req.query);
-    // Staff only need enough to pick a customer for a credit sale
-    if (!can(req.user, P.CREDIT_MANAGE)) {
+    // Anyone who can't manage credit or record a payment only needs enough to pick a customer for a sale
+    if (!can(req.user, P.CREDIT_MANAGE) && !can(req.user, P.CREDIT_PAYMENT_RECORD)) {
       return res.json(rows.map(({ id, name, phone, businessName }) => ({ id, name, phone, businessName })));
     }
     res.json(rows);
