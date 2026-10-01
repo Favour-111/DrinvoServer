@@ -1,7 +1,7 @@
 import { Business, Shop, User } from '../models/index.js';
 import { ApiError } from '../utils/ApiError.js';
 import { invalidateAuthCache, signToken } from '../middleware/auth.js';
-import { permissionsFor } from '../config/roles.js';
+import { can, P, permissionsFor } from '../config/roles.js';
 import { publicUser, pickStaffColor } from './staff.service.js';
 import { logAudit } from './audit.service.js';
 import { checkStaffAccess } from '../utils/staffAccess.js';
@@ -13,7 +13,8 @@ async function session(user) {
     Shop.find({
       businessId: user.businessId,
       isActive: true,
-      ...(user.role === 'ADMIN' ? {} : { _id: { $in: user.shopIds } }),
+      // Anyone who can move stock between shops needs to see every shop, not just their own assignment.
+      ...(user.role === 'ADMIN' || can(user, P.INVENTORY_TRANSFER) ? {} : { _id: { $in: user.shopIds } }),
     })
       .sort({ createdAt: 1 })
       .lean(),
@@ -29,6 +30,7 @@ async function session(user) {
       receiptPrefix: business.receiptPrefix,
       receiptFooter: business.receiptFooter,
       showStaffOnReceipt: business.showStaffOnReceipt,
+      showDiscountOnReceipt: business.showDiscountOnReceipt,
       categories: business.categories,
       staffAccess: business.staffAccess,
     },

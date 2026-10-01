@@ -20,6 +20,7 @@ import {
   saleCtrl,
   staffCtrl,
   supplierCtrl,
+  transferCtrl,
 } from '../controllers/index.js';
 
 const api = Router();
@@ -62,7 +63,7 @@ api.post('/products/:id/restore', need(P.PRODUCT_WRITE), id, h(productCtrl.resto
 api.post('/uploads', need(P.PRODUCT_WRITE), imageUpload, h(productCtrl.upload));
 
 /* ---------- inventory ---------- */
-api.get('/inventory', need(P.INVENTORY_READ), h(inventoryCtrl.list));
+api.get('/inventory', need(P.INVENTORY_READ), validate({ query: v.inventoryListQuery }), h(inventoryCtrl.list));
 api.get('/inventory/movements', need(P.INVENTORY_HISTORY), validate({ query: v.movementQuery }), h(inventoryCtrl.movements));
 api.get('/inventory/adjustments', need(P.INVENTORY_HISTORY), validate({ query: v.listQuery }), h(inventoryCtrl.adjustments));
 api.post('/inventory/adjustments', need(P.INVENTORY_WRITE), validate({ body: v.adjustmentSchema }), h(inventoryCtrl.adjust));
@@ -72,6 +73,11 @@ api.get('/inventory/:id', need(P.INVENTORY_READ), id, h(inventoryCtrl.get));
 /* ---------- purchases ---------- */
 api.get('/purchases', need(P.INVENTORY_HISTORY), validate({ query: v.listQuery.extend({ supplierId: v.objectId.optional() }) }), h(purchaseCtrl.list));
 api.post('/purchases', need(P.INVENTORY_WRITE), validate({ body: v.restockSchema }), h(purchaseCtrl.create));
+
+/* ---------- stock transfers ---------- */
+api.get('/transfers', need(P.INVENTORY_TRANSFER), validate({ query: v.transferListQuery }), h(transferCtrl.list));
+api.post('/transfers', need(P.INVENTORY_TRANSFER), validate({ body: v.transferSchema }), h(transferCtrl.create));
+api.get('/transfers/:id', need(P.INVENTORY_TRANSFER), id, h(transferCtrl.get));
 
 /* ---------- sales ---------- */
 api.post('/sales', need(P.SALE_CREATE), validate({ body: v.saleCreateSchema }), h(saleCtrl.create));

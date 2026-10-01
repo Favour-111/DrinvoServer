@@ -60,6 +60,7 @@ function variantDoc(ctx, product, v) {
     size: v.size,
     costPrice: v.costPrice,
     sellingPrice: v.sellingPrice,
+    minimumSellingPrice: v.minimumSellingPrice || 0,
     unitConversions: { bottle: 1, ...v.unitConversions },
     unitPrices: v.unitPrices,
     lowStockThreshold: v.lowStockThreshold,
@@ -181,6 +182,21 @@ export async function updateProduct(ctx, id, input) {
           );
           // Only reset the average cost where there is no stock to average against
           await Inventory.updateMany({ productVariantId: current._id, quantity: 0 }, { $set: { avgCost: v.costPrice } }, { session: tx.session });
+        }
+        if ((current.minimumSellingPrice || 0) !== (v.minimumSellingPrice || 0)) {
+          await logAudit(
+            ctx,
+            {
+              category: 'product',
+              action: 'product.minimum_price_changed',
+              summary: 'changed minimum selling price',
+              target: doc.name,
+              detail: `${naira(current.minimumSellingPrice || 0)} → ${naira(v.minimumSellingPrice || 0)}`,
+              entityType: 'ProductVariant',
+              entityId: current._id,
+            },
+            tx
+          );
         }
         await updateDoc(ProductVariant, current, { $set: doc }, tx);
       } else {

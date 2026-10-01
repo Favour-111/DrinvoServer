@@ -25,9 +25,7 @@ export async function listSuppliers(ctx, { q } = {}) {
     return {
       id: String(s._id),
       name: s.name,
-      contactName: s.contactName,
-      phone: s.phone,
-      email: s.email,
+      contacts: s.contacts || [],
       address: s.address,
       totalPurchases: t?.total || 0,
       purchaseCount: t?.count || 0,

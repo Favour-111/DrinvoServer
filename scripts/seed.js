@@ -90,12 +90,19 @@ const BUYERS = [
 ].map(([name, phone]) => ({ name, phone }));
 
 const SUPPLIERS = [
-  { name: 'ABC Beverages Ltd', contactName: 'Emeka Nwosu', phone: '0802 118 4410', email: 'orders@abcbeverages.ng', address: '22 Wharf Rd, Apapa, Lagos' },
-  { name: 'NB Depot Surulere', contactName: 'Kunle Adebayo', phone: '0803 660 1289', email: 'surulere@nbdepot.ng', address: '5 Bode Thomas St, Surulere, Lagos' },
-  { name: 'Guinness Depot Ikeja', contactName: 'Ifeoma Obi', phone: '0817 402 9934', email: 'ikeja@gdepot.ng', address: 'Plot 9, Oba Akran Ave, Ikeja' },
-  { name: 'CHI Distribution Hub', contactName: 'Segun Alade', phone: '0805 993 1120', email: 'hub@chidistro.ng', address: 'Km 14 Lagos-Ibadan Expy, Ogun' },
-  { name: 'Seven-Up Direct', contactName: 'Aisha Bello', phone: '0810 245 7781', email: 'direct@sevenupng.com', address: 'Ijora Causeway, Lagos' },
-  { name: 'Energy Plus Distributors', contactName: 'David Etim', phone: '0708 118 6630', email: 'sales@energyplus.ng', address: '17 Allen Ave, Ikeja, Lagos' },
+  { name: 'ABC Beverages Ltd', contacts: [{ name: 'Emeka Nwosu', phone: '0802 118 4410', email: 'orders@abcbeverages.ng' }], address: '22 Wharf Rd, Apapa, Lagos' },
+  { name: 'NB Depot Surulere', contacts: [{ name: 'Kunle Adebayo', phone: '0803 660 1289', email: 'surulere@nbdepot.ng' }], address: '5 Bode Thomas St, Surulere, Lagos' },
+  { name: 'Guinness Depot Ikeja', contacts: [{ name: 'Ifeoma Obi', phone: '0817 402 9934', email: 'ikeja@gdepot.ng' }], address: 'Plot 9, Oba Akran Ave, Ikeja' },
+  { name: 'CHI Distribution Hub', contacts: [{ name: 'Segun Alade', phone: '0805 993 1120', email: 'hub@chidistro.ng' }], address: 'Km 14 Lagos-Ibadan Expy, Ogun' },
+  {
+    name: 'Seven-Up Direct',
+    contacts: [
+      { name: 'Aisha Bello', phone: '0810 245 7781', email: 'direct@sevenupng.com' },
+      { name: 'Tunde Fashola', phone: '0810 245 7790', email: 'accounts@sevenupng.com' },
+    ],
+    address: 'Ijora Causeway, Lagos',
+  },
+  { name: 'Energy Plus Distributors', contacts: [{ name: 'David Etim', phone: '0708 118 6630', email: 'sales@energyplus.ng' }], address: '17 Allen Ave, Ikeja, Lagos' },
 ];
 
 const CUSTOMERS = [
@@ -150,6 +157,8 @@ async function main() {
         supplierId: supplierIds[p.supplier],
         variants: p.variants.map((v) => ({
           size: v.size, costPrice: v.cost, sellingPrice: v.price,
+          // Demo floor: roughly cost plus a thin margin, so staff still have discount room below the default price.
+          minimumSellingPrice: Math.round(((v.cost * 1.1) / 10)) * 10,
           unitConversions: { pack: v.conv.pack || 0, carton: v.conv.carton || 0, crate: v.conv.crate || 0 },
           unitPrices: { pack: v.prices?.pack || 0, carton: v.prices?.carton || 0, crate: v.prices?.crate || 0 },
           lowStockThreshold: v.low,

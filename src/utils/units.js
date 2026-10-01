@@ -20,6 +20,13 @@ export function priceFor(variant, unit) {
   return own > 0 ? own : variant.sellingPrice * conv;
 }
 
+/** Lowest allowed selling price for one `unit`, scaled the same way as priceFor. 0 means no floor. */
+export function minimumFor(variant, unit) {
+  const conv = conversionFor(variant, unit);
+  if (!conv) return 0;
+  return (Number(variant.minimumSellingPrice) || 0) * conv;
+}
+
 /** Converts a quantity in `unit` to base bottles, rejecting units this variant doesn't use. */
 export function toBase(variant, unit, quantity) {
   const conv = conversionFor(variant, unit);

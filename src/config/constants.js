@@ -18,7 +18,8 @@ export const MOVEMENT_TYPES = [
   'SUPPLIER_RETURN',
   'ADJUSTMENT',
   'SALE_VOID',
-  'TRANSFER',
+  'TRANSFER_OUT',
+  'TRANSFER_IN',
 ];
 
 /**

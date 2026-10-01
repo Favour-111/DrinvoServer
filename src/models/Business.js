@@ -10,6 +10,9 @@ const businessSchema = new Schema(
     receiptPrefix: { type: String, default: 'INV-', maxlength: 10 },
     receiptFooter: { type: String, default: 'Thank you for your purchase!', maxlength: 200 },
     showStaffOnReceipt: { type: Boolean, default: true },
+    // When false, the printed/shared customer receipt hides discount info; admin-side views (Sale
+    // detail, reports) always show it regardless — this only controls what the customer sees.
+    showDiscountOnReceipt: { type: Boolean, default: true },
     categories: { type: [String], default: DEFAULT_CATEGORIES },
     staffAccess: {
       shutdown: { type: Boolean, default: false },

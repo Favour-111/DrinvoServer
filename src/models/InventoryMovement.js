@@ -12,7 +12,7 @@ const movementSchema = new Schema(
     quantity: { type: Number, required: true }, // signed, in bottles
     balanceAfter: { type: Number, required: true },
     unitCost: { type: Number, default: 0 },
-    referenceType: { type: String, enum: ['Sale', 'Purchase', 'Return', 'StockAdjustment', 'Product', null], default: null },
+    referenceType: { type: String, enum: ['Sale', 'Purchase', 'Return', 'StockAdjustment', 'StockTransfer', 'Product', null], default: null },
     referenceId: { type: ObjectId, default: null },
     referenceNumber: { type: String, default: '' },
     performedBy: ref('User', true),

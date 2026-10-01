@@ -31,6 +31,9 @@ const variantSchema = new Schema(
     // Reference cost per bottle. Actual sale cost uses the shop's weighted average (Inventory.avgCost).
     costPrice: { ...money, required: true },
     sellingPrice: { ...money, required: true },
+    // Lowest price staff may sell at after a discount. 0 (the default, incl. for products created
+    // before this field existed) means no floor is enforced.
+    minimumSellingPrice: { ...money, default: 0 },
     unitConversions: { type: conversionSchema, default: () => ({}) },
     unitPrices: { type: unitPriceSchema, default: () => ({}) },
     image: { type: String, default: '' },

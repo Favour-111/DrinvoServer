@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { CreditPayment, Customer, Inventory, Payment, Refund, Return, ReturnItem, Sale, SaleItem } from '../models/index.js';
 import { ApiError } from '../utils/ApiError.js';
 import { createDoc, createDocs, runAtomic } from '../utils/atomic.js';
-import { describeStock, priceFor, toBase } from '../utils/units.js';
+import { describeStock, minimumFor, priceFor, toBase } from '../utils/units.js';
 import { formatNumber, nextSequence } from '../utils/sequence.js';
 import { resolveRange } from '../utils/dates.js';
 import { escapeRegex, pageParams } from '../utils/serialize.js';
@@ -36,13 +36,21 @@ export async function createSale(ctx, input) {
     const variant = await loadVariant(ctx, item.variantId);
     // 4. Convert selling unit to base bottles
     const { conversion, baseQuantity } = toBase(variant, item.unit, item.quantity);
+    // A staff-entered price is the actual per-unit price to charge — it can go above or below the
+    // catalog price, but never below the admin-configured minimum (0 = no floor).
     const listPrice = priceFor(variant, item.unit);
-    // A staff-entered price is a discount only: it can drop the price but never raise it above the catalog price.
-    if (item.price != null && item.price > listPrice) {
-      throw ApiError.badRequest(`${variant.name} can’t be sold above its price of ${naira(listPrice)}.`, { fields: { items: 'Price is too high' } });
+    const unitPrice = item.price != null ? Number(item.price) : listPrice;
+    if (unitPrice < 0) {
+      throw ApiError.badRequest(`Price can’t be negative for ${variant.name}.`, { fields: { items: 'Invalid price' } });
     }
-    const unitPrice = item.price ?? listPrice;
-    lines.push({ variant, item, conversion, baseQuantity, listPrice, unitPrice, lineTotal: unitPrice * item.quantity });
+    const minPrice = minimumFor(variant, item.unit);
+    if (minPrice > 0 && unitPrice < minPrice) {
+      throw ApiError.badRequest(`${variant.name} can’t be sold below its minimum price of ${naira(minPrice)}.`, { fields: { items: 'Price is below the minimum selling price' } });
+    }
+    // Still tracked for reporting/receipts, but only ever a knocked-off amount — never negative,
+    // so selling above the catalog price isn't recorded as a (nonsensical) negative discount.
+    const discount = Math.round(Math.max(0, listPrice - unitPrice) * 100) / 100;
+    lines.push({ variant, item, conversion, baseQuantity, listPrice, discount, unitPrice, lineTotal: unitPrice * item.quantity });
     needByVariant.set(String(variant._id), (needByVariant.get(String(variant._id)) || 0) + baseQuantity);
   }
 
@@ -115,6 +123,7 @@ export async function createSale(ctx, input) {
         conversion: l.conversion,
         baseQuantity: l.baseQuantity,
         listPrice: l.listPrice,
+        discount: l.discount,
         unitPrice: l.unitPrice,
         lineTotal: l.lineTotal,
         unitCost,
@@ -125,7 +134,7 @@ export async function createSale(ctx, input) {
     // 5, 7. Totals and profit
     const total = itemDocs.reduce((s, i) => s + i.lineTotal, 0);
     const totalCost = Math.round(itemDocs.reduce((s, i) => s + i.lineCost, 0) * 100) / 100;
-    const totalDiscount = Math.round(itemDocs.reduce((s, i) => s + (i.listPrice - i.unitPrice) * i.quantity, 0) * 100) / 100;
+    const totalDiscount = Math.round(itemDocs.reduce((s, i) => s + i.discount * i.quantity, 0) * 100) / 100;
 
     // 8-9. Sale and items
     const sale = await createDoc(
@@ -276,6 +285,7 @@ function saleView(s, items = []) {
       conversion: i.conversion,
       baseQuantity: i.baseQuantity,
       listPrice: i.listPrice ?? i.unitPrice,
+      discount: i.discount ?? Math.max(0, (i.listPrice ?? i.unitPrice) - i.unitPrice),
       unitPrice: i.unitPrice,
       lineTotal: i.lineTotal,
       unitCost: i.unitCost,

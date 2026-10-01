@@ -4,9 +4,11 @@ import {
   InventoryMovement,
   Product,
   ProductVariant,
+  Shop,
   StockAdjustment,
 } from '../models/index.js';
 import { ADJUSTMENT_TYPES } from '../config/constants.js';
+import { can, P } from '../config/roles.js';
 import { ApiError } from '../utils/ApiError.js';
 import { createDoc, runAtomic } from '../utils/atomic.js';
 import { describeStock, toBase } from '../utils/units.js';
@@ -126,10 +128,12 @@ export async function loadVariant(ctx, variantId, { session = null, requireActiv
 }
 
 /**
- * Flat list of every variant with its stock at the current shop.
+ * Flat list of every variant with its stock at the current shop (or, when `shopIds` is given,
+ * summed across those shops for display — the underlying Inventory documents stay independent
+ * per shop; this only aggregates the numbers shown here).
  * Missing inventory rows count as zero stock.
  */
-export async function stockRows(ctx, { includeArchived = false, q, category, status, productIds, variantIds } = {}) {
+export async function stockRows(ctx, { includeArchived = false, q, category, status, productIds, variantIds, shopIds } = {}) {
   const productFilter = { businessId: ctx.businessId };
   if (!includeArchived) productFilter.status = 'ACTIVE';
   if (category) productFilter.category = category;
@@ -138,14 +142,24 @@ export async function stockRows(ctx, { includeArchived = false, q, category, sta
   if (!includeArchived) variantFilter.status = 'ACTIVE';
   if (productIds) variantFilter.productId = { $in: productIds };
   if (variantIds) variantFilter._id = { $in: variantIds };
+  const shopFilter = shopIds?.length ? { $in: shopIds } : ctx.shopId;
   // Fetched together (one round trip); variants are matched to products below
   const [products, variants, inventories] = await Promise.all([
     Product.find(productFilter).lean(),
     ProductVariant.find(variantFilter).lean(),
-    Inventory.find({ shopId: ctx.shopId }).lean(),
+    Inventory.find({ shopId: shopFilter }).lean(),
   ]);
   const byProduct = new Map(products.map((p) => [String(p._id), p]));
-  const byVariant = new Map(inventories.map((i) => [String(i.productVariantId), i]));
+  // Sums inventory across shops when more than one is in play; a single shop behaves exactly as before.
+  const byVariant = new Map();
+  for (const inv of inventories) {
+    const key = String(inv.productVariantId);
+    const acc = byVariant.get(key) || { quantity: 0, value: 0, threshold: null };
+    acc.quantity += inv.quantity || 0;
+    acc.value += (inv.quantity || 0) * (inv.avgCost || 0);
+    if (inv.lowStockThreshold != null) acc.threshold = acc.threshold == null ? inv.lowStockThreshold : Math.min(acc.threshold, inv.lowStockThreshold);
+    byVariant.set(key, acc);
+  }
 
   const needle = q ? new RegExp(escapeRegex(q), 'i') : null;
   const rows = [];
@@ -155,8 +169,8 @@ export async function stockRows(ctx, { includeArchived = false, q, category, sta
     if (needle && !needle.test(v.name) && !needle.test(p.brand) && !needle.test(p.category)) continue;
     const inv = byVariant.get(String(v._id));
     const quantity = inv?.quantity ?? 0;
-    const threshold = inv?.lowStockThreshold ?? v.lowStockThreshold ?? 0;
-    const avgCost = inv?.avgCost || v.costPrice;
+    const threshold = inv?.threshold ?? v.lowStockThreshold ?? 0;
+    const avgCost = quantity > 0 ? inv.value / quantity : v.costPrice;
     const st = p.status === 'ARCHIVED' || v.status === 'ARCHIVED' ? 'archived' : stockStatus(quantity, threshold);
     if (status && st !== status) continue;
     rows.push({
@@ -174,6 +188,7 @@ export async function stockRows(ctx, { includeArchived = false, q, category, sta
       costPrice: v.costPrice,
       avgCost: round2(avgCost),
       sellingPrice: v.sellingPrice,
+      minimumSellingPrice: v.minimumSellingPrice || 0,
       unitConversions: { bottle: 1, pack: v.unitConversions?.pack || 0, carton: v.unitConversions?.carton || 0, crate: v.unitConversions?.crate || 0 },
       unitPrices: { pack: v.unitPrices?.pack || 0, carton: v.unitPrices?.carton || 0, crate: v.unitPrices?.crate || 0 },
       quantity,
@@ -199,10 +214,27 @@ export function summarize(rows) {
   };
 }
 
+/**
+ * Resolves a requested `?shopId=` (a specific other shop, or 'all') into an explicit shop id
+ * list — for admins (full oversight) and anyone who can create transfers (they need to see
+ * another shop's stock before moving it). Everyone else only ever sees their own active shop.
+ */
+async function resolveShopIds(ctx, requested) {
+  const allowed = ctx.user.role === 'ADMIN' || can(ctx.user, P.INVENTORY_TRANSFER);
+  if (!requested || !allowed || String(requested) === String(ctx.shopId)) return undefined;
+  if (requested === 'all') {
+    const shops = await Shop.find({ businessId: ctx.businessId, isActive: true }, '_id').lean();
+    return shops.map((s) => s._id);
+  }
+  const shop = await Shop.findOne({ _id: requested, businessId: ctx.businessId, isActive: true }).lean();
+  return shop ? [shop._id] : undefined;
+}
+
 export async function listInventory(ctx, query) {
-  const rows = await stockRows(ctx, { q: query.q, category: query.category, status: query.status });
-  const all = query.q || query.status || query.category ? await stockRows(ctx) : rows;
-  return { items: rows, summary: summarize(all) };
+  const shopIds = await resolveShopIds(ctx, query.shopId);
+  const rows = await stockRows(ctx, { q: query.q, category: query.category, status: query.status, shopIds });
+  const all = query.q || query.status || query.category ? await stockRows(ctx, { shopIds }) : rows;
+  return { items: rows, summary: summarize(all), viewingShopId: shopIds?.length > 1 ? 'all' : shopIds?.[0] ? String(shopIds[0]) : String(ctx.shopId) };
 }
 
 export async function getInventoryDetail(ctx, variantId, { withHistory }) {
@@ -211,6 +243,14 @@ export async function getInventoryDetail(ctx, variantId, { withHistory }) {
     rs.filter((r) => r.variantId === String(variant._id))
   );
   const result = { item: row };
+  if (ctx.user.role === 'ADMIN') {
+    const shops = await Shop.find({ businessId: ctx.businessId, isActive: true }).sort({ createdAt: 1 }).lean();
+    if (shops.length > 1) {
+      const inventories = await Inventory.find({ productVariantId: variant._id, shopId: { $in: shops.map((s) => s._id) } }).lean();
+      const byShop = new Map(inventories.map((i) => [String(i.shopId), i.quantity]));
+      result.byShop = shops.map((s) => ({ shopId: String(s._id), shopName: s.name, quantity: byShop.get(String(s._id)) || 0 }));
+    }
+  }
   if (withHistory) {
     const movements = await listMovements(ctx, { variantId, limit: 100 });
     result.movements = movements.items;

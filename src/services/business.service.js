@@ -1,4 +1,5 @@
 import { Business, Shop } from '../models/index.js';
+import { can, P } from '../config/roles.js';
 import { ApiError } from '../utils/ApiError.js';
 import { logAudit } from './audit.service.js';
 import { invalidateAuthCache } from '../middleware/auth.js';
@@ -51,7 +52,8 @@ export async function updateBusiness(ctx, input) {
 
 export async function listShops(ctx) {
   const filter = { businessId: ctx.businessId };
-  if (ctx.user.role !== 'ADMIN') filter._id = { $in: ctx.user.shopIds };
+  // Anyone who can move stock between shops needs to see every shop, not just their own assignment.
+  if (ctx.user.role !== 'ADMIN' && !can(ctx.user, P.INVENTORY_TRANSFER)) filter._id = { $in: ctx.user.shopIds };
   const shops = await Shop.find(filter).sort({ createdAt: 1 }).lean();
   return shops.map((s) => ({ ...s, id: String(s._id) }));
 }

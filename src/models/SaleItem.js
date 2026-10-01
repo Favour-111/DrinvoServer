@@ -19,6 +19,8 @@ const saleItemSchema = new Schema(
     baseQuantity: { type: Number, required: true, min: 1 },
     // Catalog price at sale time; unitPrice is what was actually charged (may be discounted, never above listPrice).
     listPrice: { ...money },
+    // Fixed ₦ knocked off listPrice for this line: unitPrice = listPrice - discount.
+    discount: { ...money, default: 0 },
     unitPrice: { ...money },
     lineTotal: { ...money },
     unitCost: { ...money }, // per bottle

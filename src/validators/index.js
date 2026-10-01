@@ -35,6 +35,7 @@ export const businessUpdateSchema = z.object({
   receiptPrefix: text(10).min(1).optional(),
   receiptFooter: text(200).optional(),
   showStaffOnReceipt: z.boolean().optional(),
+  showDiscountOnReceipt: z.boolean().optional(),
   timezone: text(60).optional(),
   categories: z.array(text(60).min(1)).max(50).optional(),
   staffAccess: z
@@ -75,8 +76,9 @@ const variantInput = z
   .object({
     id: objectId.optional(),
     size: text(40).min(1, 'Enter a size, e.g. 50cl'),
-    costPrice: money.refine((n) => n > 0, 'Enter a cost price'),
+    costPrice: money.refine((n) => n >= 0, 'Cost price must be 0 or more'),
     sellingPrice: money.refine((n) => n > 0, 'Enter a selling price'),
+    minimumSellingPrice: money.default(0),
     unitConversions: conversionSchema.default({}),
     unitPrices: unitPriceSchema.default({}),
     lowStockThreshold: z.coerce.number().int().min(0).default(0),
@@ -89,6 +91,9 @@ const variantInput = z
     }
     if (v.openingStock && v.openingStock.unit !== 'bottle' && !v.unitConversions[v.openingStock.unit]) {
       ctx.addIssue({ code: 'custom', path: ['openingStock', 'unit'], message: `Turn on ${v.openingStock.unit}s first` });
+    }
+    if (v.minimumSellingPrice > v.sellingPrice) {
+      ctx.addIssue({ code: 'custom', path: ['minimumSellingPrice'], message: 'Minimum selling price cannot be higher than the default selling price.' });
     }
   });
 
@@ -132,6 +137,29 @@ export const adjustmentSchema = z.object({
 export const movementQuery = listQuery.extend({
   variantId: objectId.optional(),
   type: z.string().max(40).optional(),
+});
+export const inventoryListQuery = listQuery.extend({
+  category: z.string().trim().max(60).optional(),
+  status: z.enum(['in', 'low', 'out']).optional(),
+  shopId: z.union([objectId, z.literal('all')]).optional(),
+});
+export const transferSchema = z
+  .object({
+    fromShopId: objectId,
+    toShopId: objectId,
+    items: z.array(z.object({ variantId: objectId, unit, quantity: positiveInt })).min(1, 'Add at least one product').max(100),
+    notes: optionalText(1000),
+  })
+  .superRefine((v, ctx) => {
+    if (v.fromShopId === v.toShopId) ctx.addIssue({ code: 'custom', path: ['toShopId'], message: 'Source and destination shops must be different.' });
+  });
+export const transferListQuery = listQuery.extend({
+  shopId: objectId.optional(),
+  status: z.enum(['PENDING', 'COMPLETED', 'CANCELLED']).optional(),
+  variantId: objectId.optional(),
+  range: z.enum(['today', 'yesterday', '7d', '30d', 'month', 'year', 'custom', 'all']).default('all'),
+  from: z.string().optional(),
+  to: z.string().optional(),
 });
 
 /* ---------- sales ---------- */
@@ -184,11 +212,14 @@ export const refundSchema = z.object({
 export const voidSchema = z.object({ reason: text(300).min(2, 'Give a reason') });
 
 /* ---------- suppliers ---------- */
+export const supplierContactSchema = z.object({
+  name: text(120).min(1, 'Enter a name'),
+  phone: optionalText(40),
+  email: z.string().trim().email('Enter a valid email').or(z.literal('')).optional().default(''),
+});
 export const supplierSchema = z.object({
   name: text(160).min(2, 'Enter a supplier name'),
-  contactName: optionalText(120),
-  phone: phone,
-  email: z.string().trim().email('Enter a valid email').or(z.literal('')).optional().default(''),
+  contacts: z.array(supplierContactSchema).min(1, 'Add at least one contact person').max(10),
   address: optionalText(240),
   notes: optionalText(1000),
 });

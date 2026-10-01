@@ -9,6 +9,7 @@ export const P = {
   INVENTORY_READ: 'inventory:read',
   INVENTORY_WRITE: 'inventory:write',
   INVENTORY_HISTORY: 'inventory:history',
+  INVENTORY_TRANSFER: 'inventory:transfer',
   COST_READ: 'cost:read',
   SALE_CREATE: 'sale:create',
   SALE_READ_OWN: 'sale:read:own',
@@ -29,6 +30,7 @@ export const ROLE_PERMISSIONS = {
   STAFF: [
     P.PRODUCT_READ,
     P.INVENTORY_READ,
+    P.INVENTORY_TRANSFER,
     P.SALE_CREATE,
     P.SALE_READ_OWN,
     P.CUSTOMER_LOOKUP,

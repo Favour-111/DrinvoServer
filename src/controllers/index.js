@@ -18,6 +18,7 @@ import * as staff from '../services/staff.service.js';
 import * as reports from '../services/report.service.js';
 import * as audit from '../services/audit.service.js';
 import * as invitations from '../services/invitation.service.js';
+import * as transfers from '../services/transfer.service.js';
 
 /* ---------- business & shops ---------- */
 export const businessCtrl = {
@@ -66,6 +67,13 @@ export const inventoryCtrl = {
 export const purchaseCtrl = {
   list: async (req, res) => res.json(await purchases.listPurchases(req.ctx, req.query)),
   create: async (req, res) => res.status(201).json(await purchases.createPurchase(req.ctx, req.body)),
+};
+
+/* ---------- stock transfers ---------- */
+export const transferCtrl = {
+  list: async (req, res) => res.json(await transfers.listTransfers(req.ctx, req.query)),
+  get: async (req, res) => res.json(await transfers.getTransfer(req.ctx, req.params.id)),
+  create: async (req, res) => res.status(201).json(await transfers.createStockTransfer(req.ctx, req.body)),
 };
 
 /* ---------- sales, returns, refunds ---------- */
