@@ -31,6 +31,7 @@ async function session(user) {
       receiptFooter: business.receiptFooter,
       showStaffOnReceipt: business.showStaffOnReceipt,
       showDiscountOnReceipt: business.showDiscountOnReceipt,
+      whatsappNumber: business.whatsappNumber || '',
       categories: business.categories,
       staffAccess: business.staffAccess,
     },

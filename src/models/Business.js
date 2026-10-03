@@ -13,6 +13,9 @@ const businessSchema = new Schema(
     // When false, the printed/shared customer receipt hides discount info; admin-side views (Sale
     // detail, reports) always show it regardless — this only controls what the customer sees.
     showDiscountOnReceipt: { type: Boolean, default: true },
+    // Shown in the WhatsApp price-share flow as a reminder of which device/number to send from —
+    // there's no API account wired up, so sending still happens via whatsapp.com/send on that device.
+    whatsappNumber: { type: String, trim: true, maxlength: 30, default: '' },
     categories: { type: [String], default: DEFAULT_CATEGORIES },
     staffAccess: {
       shutdown: { type: Boolean, default: false },

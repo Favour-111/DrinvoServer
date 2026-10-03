@@ -9,6 +9,7 @@ import { escapeRegex, pageParams } from '../utils/serialize.js';
 import { can, P } from '../config/roles.js';
 import { applyMovement, loadVariant } from './inventory.service.js';
 import { bumpCreditAccount, resolveCreditCustomer, resolveCustomer } from './customer.service.js';
+import { consumeOnDemandStock } from './ondemand.service.js';
 import { logAudit } from './audit.service.js';
 
 const naira = (n) => '₦' + Math.round(n).toLocaleString('en-US');
@@ -115,6 +116,10 @@ export async function createSale(ctx, input) {
         reason: 'Sale',
         date: occurredAt,
       });
+      // Bookkeeping only — links this sale to whichever on-demand purchase batch(es) it drew
+      // from so each stays correctly marked sold/partially sold for audit purposes. The stock
+      // deduction and its cost already happened above, the same as for any other sale.
+      await consumeOnDemandStock(ctx, tx, l.variant._id, l.baseQuantity, { id: saleId, number: receiptNumber });
       itemDocs.push({
         saleId,
         businessId: ctx.businessId,

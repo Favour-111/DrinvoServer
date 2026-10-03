@@ -36,6 +36,7 @@ export const businessUpdateSchema = z.object({
   receiptFooter: text(200).optional(),
   showStaffOnReceipt: z.boolean().optional(),
   showDiscountOnReceipt: z.boolean().optional(),
+  whatsappNumber: text(30).optional(),
   timezone: text(60).optional(),
   categories: z.array(text(60).min(1)).max(50).optional(),
   staffAccess: z
@@ -117,6 +118,11 @@ export const productListQuery = listQuery.extend({
   stock: z.enum(['in', 'low', 'out']).optional(),
 });
 
+export const supplierListQuery = listQuery.extend({
+  status: z.enum(['ACTIVE', 'ARCHIVED']).optional(),
+});
+export const deleteSupplierSchema = z.object({ confirmName: z.string().min(1) });
+
 /* ---------- inventory ---------- */
 export const restockSchema = z.object({
   supplierId: objectId,
@@ -160,6 +166,81 @@ export const transferListQuery = listQuery.extend({
   range: z.enum(['today', 'yesterday', '7d', '30d', 'month', 'year', 'custom', 'all']).default('all'),
   from: z.string().optional(),
   to: z.string().optional(),
+});
+
+/* ---------- physical stock count ---------- */
+const countedUnit = z.object({ unit, quantity: z.coerce.number().int('Use a whole number').min(0).max(1_000_000) });
+export const stockCountSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        variantId: objectId,
+        counts: z.array(countedUnit).min(1, 'Enter at least one unit'),
+        notes: optionalText(500),
+      })
+    )
+    .min(1, 'Count at least one product'),
+  notes: optionalText(1000),
+});
+export const stockCountListQuery = listQuery.extend({
+  shopId: objectId.optional(),
+  status: z.enum(['SUBMITTED', 'REVIEWED']).optional(),
+  hasDifference: z.coerce.boolean().optional(),
+});
+
+/* ---------- borrowed drinks ---------- */
+const borrowItem = z.object({ variantId: objectId, counts: z.array(countedUnit).min(1, 'Enter at least one unit') });
+export const borrowingSchema = z.object({
+  direction: z.enum(['LENT', 'BORROWED']),
+  counterpartyName: text(160).min(2, 'Enter who this is with'),
+  counterpartyPhone: optionalText(40),
+  items: z.array(borrowItem).min(1, 'Add at least one product'),
+  expectedReturnDate: z.coerce.date().optional(),
+  notes: optionalText(1000),
+});
+export const borrowReturnSchema = z.object({
+  items: z.array(borrowItem).min(1, 'Add at least one product'),
+  notes: optionalText(500),
+});
+export const borrowingListQuery = listQuery.extend({
+  direction: z.enum(['LENT', 'BORROWED']).optional(),
+  status: z.enum(['OUTSTANDING', 'PARTIALLY_RETURNED', 'RETURNED']).optional(),
+  overdue: z.coerce.boolean().optional(),
+});
+
+/* ---------- on-demand (special) purchases ---------- */
+const onDemandNewProduct = z.object({
+  name: text(120).min(1, 'Enter a product name'),
+  brand: optionalText(120),
+  category: text(60).min(1, 'Choose a category'),
+  size: text(40).min(1, 'Enter a size, e.g. 50cl'),
+  sellingPrice: money.refine((n) => n > 0, 'Enter a selling price'),
+});
+export const onDemandCreateSchema = z
+  .object({
+    variantId: objectId.optional(),
+    newProduct: onDemandNewProduct.optional(),
+    requestedQuantity: positiveInt,
+    unit,
+    purchasedFrom: text(160).min(2, 'Enter who this will be bought from'),
+    purchasedFromPhone: optionalText(40),
+    sellingPricePerUnit: money.optional(),
+    customerName: optionalText(160),
+    notes: optionalText(1000),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.variantId && !v.newProduct) ctx.addIssue({ code: 'custom', path: ['variantId'], message: 'Choose a product, or add a new one.' });
+    if (v.variantId && v.newProduct) ctx.addIssue({ code: 'custom', path: ['newProduct'], message: 'Choose an existing product or add a new one, not both.' });
+  });
+export const onDemandPurchasedSchema = z.object({
+  quantity: positiveInt,
+  unit,
+  unitCost: money.refine((n) => n > 0, 'Enter what it cost'),
+  sellingPricePerUnit: money.optional(),
+});
+export const onDemandCancelSchema = z.object({ reason: optionalText(500) });
+export const onDemandListQuery = listQuery.extend({
+  status: z.enum(['PENDING', 'PURCHASED', 'PARTIALLY_SOLD', 'SOLD', 'CANCELLED']).optional(),
 });
 
 /* ---------- sales ---------- */

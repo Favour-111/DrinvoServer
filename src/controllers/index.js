@@ -19,6 +19,9 @@ import * as reports from '../services/report.service.js';
 import * as audit from '../services/audit.service.js';
 import * as invitations from '../services/invitation.service.js';
 import * as transfers from '../services/transfer.service.js';
+import * as stockCounts from '../services/stockcount.service.js';
+import * as borrowings from '../services/borrow.service.js';
+import * as ondemand from '../services/ondemand.service.js';
 
 /* ---------- business & shops ---------- */
 export const businessCtrl = {
@@ -76,6 +79,30 @@ export const transferCtrl = {
   create: async (req, res) => res.status(201).json(await transfers.createStockTransfer(req.ctx, req.body)),
 };
 
+export const stockCountCtrl = {
+  list: async (req, res) => res.json(await stockCounts.listStockCounts(req.ctx, req.query)),
+  get: async (req, res) => res.json(await stockCounts.getStockCount(req.ctx, req.params.id)),
+  create: async (req, res) => res.status(201).json(await stockCounts.createStockCount(req.ctx, req.body)),
+  review: async (req, res) => res.json(await stockCounts.reviewStockCount(req.ctx, req.params.id)),
+};
+
+export const borrowingCtrl = {
+  list: async (req, res) => res.json(await borrowings.listBorrowings(req.ctx, req.query)),
+  get: async (req, res) => res.json(await borrowings.getBorrowing(req.ctx, req.params.id)),
+  create: async (req, res) => res.status(201).json(await borrowings.createBorrowing(req.ctx, req.body)),
+  return: async (req, res) => res.json(await borrowings.returnBorrowing(req.ctx, req.params.id, req.body)),
+};
+
+/* ---------- on-demand (special) purchases. Not sendScoped: whoever enters the cost of a
+ * purchase they made themselves needs to see it again to price the resulting sale. */
+export const ondemandCtrl = {
+  list: async (req, res) => res.json(await ondemand.listOnDemandPurchases(req.ctx, req.query)),
+  get: async (req, res) => res.json(await ondemand.getOnDemandPurchase(req.ctx, req.params.id)),
+  create: async (req, res) => res.status(201).json(await ondemand.createOnDemandPurchase(req.ctx, req.body)),
+  markPurchased: async (req, res) => res.json(await ondemand.markOnDemandPurchased(req.ctx, req.params.id, req.body)),
+  cancel: async (req, res) => res.json(await ondemand.cancelOnDemandPurchase(req.ctx, req.params.id, req.body)),
+};
+
 /* ---------- sales, returns, refunds ---------- */
 export const saleCtrl = {
   create: async (req, res) => {
@@ -115,6 +142,8 @@ export const supplierCtrl = {
   get: async (req, res) => res.json(await suppliers.getSupplier(req.ctx, req.params.id)),
   create: async (req, res) => res.status(201).json(await suppliers.createSupplier(req.ctx, req.body)),
   update: async (req, res) => res.json(await suppliers.updateSupplier(req.ctx, req.params.id, req.body)),
+  delete: async (req, res) => res.json(await suppliers.deleteSupplier(req.ctx, req.params.id, req.body.confirmName)),
+  restore: async (req, res) => res.json(await suppliers.restoreSupplier(req.ctx, req.params.id)),
 };
 
 /* ---------- staff ---------- */

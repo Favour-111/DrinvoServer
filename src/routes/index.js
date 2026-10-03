@@ -18,7 +18,10 @@ import {
   purchaseCtrl,
   reportCtrl,
   saleCtrl,
+  borrowingCtrl,
+  ondemandCtrl,
   staffCtrl,
+  stockCountCtrl,
   supplierCtrl,
   transferCtrl,
 } from '../controllers/index.js';
@@ -79,6 +82,25 @@ api.get('/transfers', need(P.INVENTORY_TRANSFER), validate({ query: v.transferLi
 api.post('/transfers', need(P.INVENTORY_TRANSFER), validate({ body: v.transferSchema }), h(transferCtrl.create));
 api.get('/transfers/:id', need(P.INVENTORY_TRANSFER), id, h(transferCtrl.get));
 
+/* ---------- physical stock counts ---------- */
+api.get('/stock-counts', need(P.STOCK_COUNT), validate({ query: v.stockCountListQuery }), h(stockCountCtrl.list));
+api.post('/stock-counts', need(P.STOCK_COUNT), validate({ body: v.stockCountSchema }), h(stockCountCtrl.create));
+api.get('/stock-counts/:id', need(P.STOCK_COUNT), id, h(stockCountCtrl.get));
+api.post('/stock-counts/:id/review', need(P.INVENTORY_WRITE), id, h(stockCountCtrl.review));
+
+/* ---------- borrowed drinks ---------- */
+api.get('/borrowings', need(P.BORROW_MANAGE), validate({ query: v.borrowingListQuery }), h(borrowingCtrl.list));
+api.post('/borrowings', need(P.BORROW_MANAGE), validate({ body: v.borrowingSchema }), h(borrowingCtrl.create));
+api.get('/borrowings/:id', need(P.BORROW_MANAGE), id, h(borrowingCtrl.get));
+api.post('/borrowings/:id/return', need(P.BORROW_MANAGE), id, validate({ body: v.borrowReturnSchema }), h(borrowingCtrl.return));
+
+/* ---------- on-demand (special) purchases ---------- */
+api.get('/on-demand-purchases', need(P.ON_DEMAND_PURCHASE), validate({ query: v.onDemandListQuery }), h(ondemandCtrl.list));
+api.post('/on-demand-purchases', need(P.ON_DEMAND_PURCHASE), validate({ body: v.onDemandCreateSchema }), h(ondemandCtrl.create));
+api.get('/on-demand-purchases/:id', need(P.ON_DEMAND_PURCHASE), id, h(ondemandCtrl.get));
+api.post('/on-demand-purchases/:id/purchased', need(P.ON_DEMAND_PURCHASE), id, validate({ body: v.onDemandPurchasedSchema }), h(ondemandCtrl.markPurchased));
+api.post('/on-demand-purchases/:id/cancel', need(P.ON_DEMAND_PURCHASE), id, validate({ body: v.onDemandCancelSchema }), h(ondemandCtrl.cancel));
+
 /* ---------- sales ---------- */
 api.post('/sales', need(P.SALE_CREATE), validate({ body: v.saleCreateSchema }), h(saleCtrl.create));
 // Offline-first staff client: syncs a batch of locally-queued sales at once (see docs/offline-sync).
@@ -92,10 +114,12 @@ api.get('/returns', need(P.SALE_MANAGE), validate({ query: v.listQuery }), h(sal
 api.get('/refunds', need(P.SALE_MANAGE), validate({ query: v.listQuery }), h(saleCtrl.listRefunds));
 
 /* ---------- suppliers ---------- */
-api.get('/suppliers', need(P.SUPPLIER_MANAGE), validate({ query: v.listQuery }), h(supplierCtrl.list));
+api.get('/suppliers', need(P.SUPPLIER_MANAGE), validate({ query: v.supplierListQuery }), h(supplierCtrl.list));
 api.post('/suppliers', need(P.SUPPLIER_MANAGE), validate({ body: v.supplierSchema }), h(supplierCtrl.create));
 api.get('/suppliers/:id', need(P.SUPPLIER_MANAGE), id, h(supplierCtrl.get));
 api.patch('/suppliers/:id', need(P.SUPPLIER_MANAGE), id, validate({ body: v.supplierSchema.partial() }), h(supplierCtrl.update));
+api.post('/suppliers/:id/delete', need(P.SUPPLIER_MANAGE), id, validate({ body: v.deleteSupplierSchema }), h(supplierCtrl.delete));
+api.post('/suppliers/:id/restore', need(P.SUPPLIER_MANAGE), id, h(supplierCtrl.restore));
 
 /* ---------- customers & credit ---------- */
 api.get('/customers', need(P.CUSTOMER_LOOKUP), validate({ query: v.listQuery }), h(customerCtrl.list));
