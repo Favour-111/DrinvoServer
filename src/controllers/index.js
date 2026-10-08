@@ -22,6 +22,7 @@ import * as transfers from '../services/transfer.service.js';
 import * as stockCounts from '../services/stockcount.service.js';
 import * as borrowings from '../services/borrow.service.js';
 import * as ondemand from '../services/ondemand.service.js';
+import * as images from '../services/image.service.js';
 
 /* ---------- business & shops ---------- */
 export const businessCtrl = {
@@ -38,6 +39,15 @@ export const invitationCtrl = {
   create: async (req, res) => res.status(201).json(await invitations.createInvitation(req.ctx, req.body)),
   revoke: async (req, res) => res.json(await invitations.revokeInvitation(req.ctx, req.params.id)),
   public: async (req, res) => res.json(await invitations.getPublicInvitation(req.params.token)),
+};
+
+/* ---------- image proxy (public; see image.service.js for why and the SSRF guard) ---------- */
+export const imageCtrl = {
+  proxy: async (req, res) => {
+    const { buffer, contentType } = await images.fetchProductImage(req.query.src);
+    res.set('Cache-Control', 'public, max-age=604800, immutable');
+    res.type(contentType).send(buffer);
+  },
 };
 
 /* ---------- products ---------- */

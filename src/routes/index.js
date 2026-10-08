@@ -20,6 +20,7 @@ import {
   saleCtrl,
   borrowingCtrl,
   ondemandCtrl,
+  imageCtrl,
   staffCtrl,
   stockCountCtrl,
   supplierCtrl,
@@ -40,6 +41,9 @@ api.use('/auth', auth);
 
 // Lets the signup page show the business name and shop(s) for a one-time invitation link, before anyone signs in
 api.get('/invite/:token', validate({ params: v.inviteTokenParam }), h(invitationCtrl.public));
+// Public: re-serves an already-known product photo from our own origin so the browser's canvas
+// can sample its colour (see image.service.js). Restricted server-side to known product images.
+api.get('/image-proxy', validate({ query: v.imageProxyQuery }), h(imageCtrl.proxy));
 
 /* Everything below needs a signed-in user and a shop */
 api.use(authenticate, shopContext, stockBroadcast);

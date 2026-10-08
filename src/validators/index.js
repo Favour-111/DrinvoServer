@@ -19,6 +19,7 @@ export const updateMeSchema = z.object({
   phone: text(40).optional(),
 });
 export const inviteTokenParam = z.object({ token: z.string().trim().min(10).max(128) });
+export const imageProxyQuery = z.object({ src: z.string().trim().min(1).max(2000) });
 export const staffSignupSchema = z.object({
   token: z.string().trim().min(10).max(128),
   name: text(120).min(2, 'Enter your name'),
