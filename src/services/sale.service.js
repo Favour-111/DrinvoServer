@@ -40,7 +40,10 @@ export async function createSale(ctx, input) {
     // A staff-entered price is the actual per-unit price to charge — it can go above or below the
     // catalog price, but never below the admin-configured minimum (0 = no floor).
     const listPrice = priceFor(variant, item.unit);
-    const unitPrice = item.price != null ? Number(item.price) : listPrice;
+    // A typed line total (e.g. 3 drinks rounded up to ₦11,800) wins over a per-unit price: the unit
+    // price is derived from it, and the total is charged exactly as typed.
+    const typedTotal = item.lineTotal != null ? Number(item.lineTotal) : null;
+    const unitPrice = typedTotal != null ? typedTotal / item.quantity : item.price != null ? Number(item.price) : listPrice;
     if (unitPrice < 0) {
       throw ApiError.badRequest(`Price can’t be negative for ${variant.name}.`, { fields: { items: 'Invalid price' } });
     }
@@ -51,7 +54,7 @@ export async function createSale(ctx, input) {
     // Still tracked for reporting/receipts, but only ever a knocked-off amount — never negative,
     // so selling above the catalog price isn't recorded as a (nonsensical) negative discount.
     const discount = Math.round(Math.max(0, listPrice - unitPrice) * 100) / 100;
-    lines.push({ variant, item, conversion, baseQuantity, listPrice, discount, unitPrice, lineTotal: unitPrice * item.quantity });
+    lines.push({ variant, item, conversion, baseQuantity, listPrice, discount, unitPrice, lineTotal: typedTotal != null ? typedTotal : unitPrice * item.quantity });
     needByVariant.set(String(variant._id), (needByVariant.get(String(variant._id)) || 0) + baseQuantity);
   }
 

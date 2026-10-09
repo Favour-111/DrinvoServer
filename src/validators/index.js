@@ -246,7 +246,7 @@ export const onDemandListQuery = listQuery.extend({
 
 /* ---------- sales ---------- */
 const saleShape = {
-  items: z.array(z.object({ variantId: objectId, unit, quantity: positiveInt, price: money.optional() })).min(1, 'Add at least one product').max(100),
+  items: z.array(z.object({ variantId: objectId, unit, quantity: positiveInt, price: money.optional(), lineTotal: money.optional() })).min(1, 'Add at least one product').max(100),
   paymentMethod: z.enum(PAYMENT_METHODS),
   customerId: objectId.optional(),
   customer: z.object({ name: text(120).min(2, 'Enter the customer name'), phone }).optional(),
