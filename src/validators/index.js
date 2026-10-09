@@ -269,6 +269,8 @@ function requireCustomerAndPart(v, ctx) {
   }
 }
 export const saleCreateSchema = z.object(saleShape).superRefine(requireCustomerAndPart);
+// Editing a sale takes the same details as creating one; backdatedAt moves its date.
+export const saleEditSchema = z.object(saleShape).superRefine(requireCustomerAndPart);
 // Offline-first sync: each queued local sale carries the id the client generated for it, so a
 // retried batch can never create the same sale twice (see Sale.clientTransactionId).
 export const syncSalesSchema = z.object({

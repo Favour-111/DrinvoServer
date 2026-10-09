@@ -111,6 +111,7 @@ api.post('/sales', need(P.SALE_CREATE), validate({ body: v.saleCreateSchema }), 
 api.post('/sync/sales', need(P.SALE_CREATE), validate({ body: v.syncSalesSchema }), h(saleCtrl.sync));
 api.get('/sales', need(P.SALE_READ_OWN), validate({ query: v.saleListQuery }), h(saleCtrl.list));
 api.get('/sales/:id', need(P.SALE_READ_OWN), id, h(saleCtrl.get));
+api.put('/sales/:id', need(P.SALE_MANAGE), id, validate({ body: v.saleEditSchema }), h(saleCtrl.edit));
 api.post('/sales/:id/return', need(P.SALE_MANAGE), id, validate({ body: v.returnSchema }), h(saleCtrl.return));
 api.post('/sales/:id/refund', need(P.SALE_MANAGE), id, validate({ body: v.refundSchema }), h(saleCtrl.refund));
 api.post('/sales/:id/void', need(P.SALE_MANAGE), id, validate({ body: v.voidSchema }), h(saleCtrl.void));

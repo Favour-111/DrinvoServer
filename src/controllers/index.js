@@ -121,6 +121,10 @@ export const saleCtrl = {
   },
   list: async (req, res) => sendScoped(req, res, await sales.listSales(req.ctx, req.query)),
   get: async (req, res) => sendScoped(req, res, await sales.getSale(req.ctx, req.params.id)),
+  edit: async (req, res) => {
+    await sales.editSale(req.ctx, req.params.id, req.body);
+    sendScoped(req, res, await sales.getSale(req.ctx, req.params.id));
+  },
   sync: async (req, res) => res.json(await sales.syncSales(req.ctx, req.body)),
   return: async (req, res) => res.status(201).json(await returns.processReturn(req.ctx, req.params.id, req.body)),
   refund: async (req, res) => res.status(201).json(await returns.processRefund(req.ctx, req.params.id, req.body)),

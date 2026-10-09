@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import { CreditPayment, Customer, Inventory, Payment, Refund, Return, ReturnItem, Sale, SaleItem } from '../models/index.js';
+import { CreditAccount, CreditPayment, Customer, Inventory, OnDemandPurchase, Payment, ProductVariant, Refund, Return, ReturnItem, Sale, SaleItem } from '../models/index.js';
 import { ApiError } from '../utils/ApiError.js';
-import { createDoc, createDocs, runAtomic } from '../utils/atomic.js';
+import { createDoc, createDocs, runAtomic, updateDoc } from '../utils/atomic.js';
 import { describeStock, minimumFor, priceFor, toBase } from '../utils/units.js';
 import { formatNumber, nextSequence } from '../utils/sequence.js';
 import { resolveRange } from '../utils/dates.js';
@@ -16,20 +16,11 @@ const naira = (n) => '₦' + Math.round(n).toLocaleString('en-US');
 const METHOD_LABEL = { CASH: 'Cash', POS: 'POS', TRANSFER: 'Transfer', CREDIT: 'Credit', PART: 'Part payment' };
 
 /**
- * Completes a sale in one atomic write:
- * validate products and stock, convert units to bottles, price the sale,
- * take cost from the shop's weighted average, create the sale and its items,
- * deduct stock with movements, record the payment, and number the receipt.
+ * Validates the products on a sale and prices every line. With `checkStock`, also gives a friendly
+ * up-front stock shortage error (the deduction itself re-checks atomically). Edits skip it because
+ * the sale being edited is still holding its own stock until it's reversed inside the transaction.
  */
-export async function createSale(ctx, input) {
-  // Idempotency: an offline client may retry the same sale after a dropped response.
-  // If we've already recorded this clientTransactionId for this shop, hand back that sale
-  // instead of creating a second one.
-  if (input.clientTransactionId) {
-    const existing = await Sale.findOne({ shopId: ctx.shopId, clientTransactionId: input.clientTransactionId }).lean();
-    if (existing) return { id: String(existing._id), receiptNumber: existing.receiptNumber, alreadyProcessed: true };
-  }
-
+async function prepareSale(ctx, input, { checkStock }) {
   // 1-2. Validate staff permission (route) and products
   const lines = [];
   const needByVariant = new Map();
@@ -73,154 +64,185 @@ export async function createSale(ctx, input) {
   }
 
   // 3. Friendly stock check up front (the deduction below re-checks atomically)
-  const inventories = await Inventory.find({ shopId: ctx.shopId, productVariantId: { $in: [...needByVariant.keys()] } }).lean();
-  const shortages = [];
-  for (const [variantId, need] of needByVariant) {
-    const available = inventories.find((i) => String(i.productVariantId) === variantId)?.quantity || 0;
-    if (need > available) {
-      const v = lines.find((l) => String(l.variant._id) === variantId).variant;
-      shortages.push({ variantId, name: v.name, requested: need, available, availableText: describeStock(v, available) });
+  if (checkStock) {
+    const inventories = await Inventory.find({ shopId: ctx.shopId, productVariantId: { $in: [...needByVariant.keys()] } }).lean();
+    const shortages = [];
+    for (const [variantId, need] of needByVariant) {
+      const available = inventories.find((i) => String(i.productVariantId) === variantId)?.quantity || 0;
+      if (need > available) {
+        const v = lines.find((l) => String(l.variant._id) === variantId).variant;
+        shortages.push({ variantId, name: v.name, requested: need, available, availableText: describeStock(v, available) });
+      }
+    }
+    if (shortages.length) {
+      throw ApiError.conflict(
+        shortages.length === 1
+          ? `Not enough stock available for ${shortages[0].name}. Only ${shortages[0].availableText} left.`
+          : 'Not enough stock available for some items.',
+        { shortages }
+      );
     }
   }
-  if (shortages.length) {
-    throw ApiError.conflict(
-      shortages.length === 1
-        ? `Not enough stock available for ${shortages[0].name}. Only ${shortages[0].availableText} left.`
-        : 'Not enough stock available for some items.',
-      { shortages }
-    );
+
+  return { lines, occurredAt, dated, isPart };
+}
+
+/** Writes a sale's items, stock movements, payments and credit within `tx`. Shared by createSale and editSale. */
+async function writeSale(ctx, tx, input, { lines, occurredAt, dated, isPart, saleId, receiptNumber, existing = null }) {
+  // Every sale records who bought it; credit sales also need a credit account
+  let credit = null;
+  let buyer = null;
+  if (input.paymentMethod === 'CREDIT' || isPart) {
+    credit = await resolveCreditCustomer(ctx, tx, { customerId: input.customerId, customer: input.customer });
+    buyer = credit.customer;
+  } else if (input.customerId || input.customer) {
+    buyer = await resolveCustomer(ctx, tx, { customerId: input.customerId, customer: input.customer });
   }
+
+  // 10-11. Deduct stock and write movements; 6. cost comes from the average before this sale
+  const itemDocs = [];
+  for (const l of lines) {
+    const { unitCost } = await applyMovement(ctx, tx, {
+      variant: l.variant,
+      delta: -l.baseQuantity,
+      type: 'SALE',
+      ref: { type: 'Sale', id: saleId, number: receiptNumber },
+      reason: 'Sale',
+      date: occurredAt,
+    });
+    // Bookkeeping only — links this sale to whichever on-demand purchase batch(es) it drew
+    // from so each stays correctly marked sold/partially sold for audit purposes. The stock
+    // deduction and its cost already happened above, the same as for any other sale.
+    await consumeOnDemandStock(ctx, tx, l.variant._id, l.baseQuantity, { id: saleId, number: receiptNumber });
+    itemDocs.push({
+      saleId,
+      businessId: ctx.businessId,
+      shopId: ctx.shopId,
+      productId: l.variant.productId,
+      productVariantId: l.variant._id,
+      productName: l.variant.product.name,
+      variantName: l.variant.name,
+      category: l.variant.product.category,
+      unit: l.item.unit,
+      quantity: l.item.quantity,
+      conversion: l.conversion,
+      baseQuantity: l.baseQuantity,
+      listPrice: l.listPrice,
+      discount: l.discount,
+      unitPrice: l.unitPrice,
+      lineTotal: l.lineTotal,
+      unitCost,
+      lineCost: Math.round(unitCost * l.baseQuantity * 100) / 100,
+      ...dated,
+    });
+  }
+
+  // 5, 7. Totals and profit
+  const total = itemDocs.reduce((s, i) => s + i.lineTotal, 0);
+  const totalCost = Math.round(itemDocs.reduce((s, i) => s + i.lineCost, 0) * 100) / 100;
+  const totalDiscount = Math.round(itemDocs.reduce((s, i) => s + i.discount * i.quantity, 0) * 100) / 100;
+
+  // 8-9. Sale and items
+  const figures = {
+    customerId: buyer?._id ?? null,
+    itemCount: itemDocs.length,
+    total,
+    totalCost,
+    totalDiscount,
+    paymentMethod: input.paymentMethod,
+    amountPaid: isPart ? input.amountPaid : input.paymentMethod === 'CREDIT' ? 0 : total,
+    paidWith: isPart ? input.paidWith : null,
+  };
+  // An edit rewrites the existing sale in place (same id, receipt number and staff); a new sale is created.
+  const sale = existing
+    ? await updateDoc(Sale, existing, { $set: { ...figures, ...(occurredAt ? { createdAt: occurredAt } : {}) } }, tx)
+    : await createDoc(
+        Sale,
+        {
+          _id: saleId,
+          businessId: ctx.businessId,
+          shopId: ctx.shopId,
+          receiptNumber,
+          ...(input.clientTransactionId ? { clientTransactionId: input.clientTransactionId } : {}),
+          staffId: ctx.userId,
+          ...figures,
+          ...dated,
+        },
+        tx
+      );
+  await createDocs(SaleItem, itemDocs, tx);
+
+  // 12. Payment records (Drinvo records the method; it never moves money).
+  // A part payment is two records: the money taken now, and the amount put on credit.
+  const payment = (method, amount) =>
+    createDoc(Payment, { businessId: ctx.businessId, shopId: ctx.shopId, kind: 'SALE', direction: 'IN', method, amount, saleId, customerId: buyer?._id ?? null, recordedBy: ctx.userId, ...dated }, tx);
+  if (isPart) {
+    await payment(input.paidWith, input.amountPaid);
+    await payment('CREDIT', total - input.amountPaid);
+  } else {
+    await payment(input.paymentMethod, total);
+  }
+  if (credit) {
+    await bumpCreditAccount(tx, credit.account._id, { credit: total, paid: isPart ? input.amountPaid : 0 });
+    if (isPart) {
+      await createDoc(
+        CreditPayment,
+        {
+          businessId: ctx.businessId,
+          shopId: ctx.shopId,
+          creditAccountId: credit.account._id,
+          customerId: buyer._id,
+          amount: input.amountPaid,
+          method: input.paidWith,
+          saleId,
+          note: `Paid at sale ${receiptNumber}`,
+          recordedBy: ctx.userId,
+          ...dated,
+        },
+        tx
+      );
+    }
+  }
+
+  await logAudit(
+    ctx,
+    {
+      category: 'sale',
+      action: existing ? 'sale.edited' : 'sale.completed',
+      summary: existing ? 'edited sale' : 'completed sale',
+      target: receiptNumber,
+      detail: `${naira(total)} · ${isPart ? `${naira(input.amountPaid)} ${METHOD_LABEL[input.paidWith]} now, ${naira(total - input.amountPaid)} owed` : METHOD_LABEL[input.paymentMethod]}${buyer ? ` · ${buyer.name}` : ''}${totalDiscount > 0 ? ` · ${naira(totalDiscount)} discount` : ''}${occurredAt ? ` · backdated to ${occurredAt.toDateString()}` : ''}`,
+      entityType: 'Sale',
+      entityId: saleId,
+    },
+    tx
+  );
+  return { id: String(sale._id), receiptNumber };
+}
+
+/**
+ * Completes a sale in one atomic write:
+ * validate products and stock, convert units to bottles, price the sale,
+ * take cost from the shop's weighted average, create the sale and its items,
+ * deduct stock with movements, record the payment, and number the receipt.
+ */
+export async function createSale(ctx, input) {
+  // Idempotency: an offline client may retry the same sale after a dropped response.
+  // If we've already recorded this clientTransactionId for this shop, hand back that sale
+  // instead of creating a second one.
+  if (input.clientTransactionId) {
+    const existing = await Sale.findOne({ shopId: ctx.shopId, clientTransactionId: input.clientTransactionId }).lean();
+    if (existing) return { id: String(existing._id), receiptNumber: existing.receiptNumber, alreadyProcessed: true };
+  }
+
+  const { lines, occurredAt, dated, isPart } = await prepareSale(ctx, input, { checkStock: true });
 
   try {
     return await runAtomic(async (tx) => {
       // 13. Receipt number
-    const seq = await nextSequence(`receipt:${ctx.shopId}`, tx);
-    const receiptNumber = formatNumber(ctx.business.receiptPrefix || 'INV-', seq);
-    const saleId = new mongoose.Types.ObjectId();
-
-    // Every sale records who bought it; credit sales also need a credit account
-    let credit = null;
-    let buyer = null;
-    if (input.paymentMethod === 'CREDIT' || isPart) {
-      credit = await resolveCreditCustomer(ctx, tx, { customerId: input.customerId, customer: input.customer });
-      buyer = credit.customer;
-    } else if (input.customerId || input.customer) {
-      buyer = await resolveCustomer(ctx, tx, { customerId: input.customerId, customer: input.customer });
-    }
-
-    // 10-11. Deduct stock and write movements; 6. cost comes from the average before this sale
-    const itemDocs = [];
-    for (const l of lines) {
-      const { unitCost } = await applyMovement(ctx, tx, {
-        variant: l.variant,
-        delta: -l.baseQuantity,
-        type: 'SALE',
-        ref: { type: 'Sale', id: saleId, number: receiptNumber },
-        reason: 'Sale',
-        date: occurredAt,
-      });
-      // Bookkeeping only — links this sale to whichever on-demand purchase batch(es) it drew
-      // from so each stays correctly marked sold/partially sold for audit purposes. The stock
-      // deduction and its cost already happened above, the same as for any other sale.
-      await consumeOnDemandStock(ctx, tx, l.variant._id, l.baseQuantity, { id: saleId, number: receiptNumber });
-      itemDocs.push({
-        saleId,
-        businessId: ctx.businessId,
-        shopId: ctx.shopId,
-        productId: l.variant.productId,
-        productVariantId: l.variant._id,
-        productName: l.variant.product.name,
-        variantName: l.variant.name,
-        category: l.variant.product.category,
-        unit: l.item.unit,
-        quantity: l.item.quantity,
-        conversion: l.conversion,
-        baseQuantity: l.baseQuantity,
-        listPrice: l.listPrice,
-        discount: l.discount,
-        unitPrice: l.unitPrice,
-        lineTotal: l.lineTotal,
-        unitCost,
-        lineCost: Math.round(unitCost * l.baseQuantity * 100) / 100,
-        ...dated,
-      });
-    }
-
-    // 5, 7. Totals and profit
-    const total = itemDocs.reduce((s, i) => s + i.lineTotal, 0);
-    const totalCost = Math.round(itemDocs.reduce((s, i) => s + i.lineCost, 0) * 100) / 100;
-    const totalDiscount = Math.round(itemDocs.reduce((s, i) => s + i.discount * i.quantity, 0) * 100) / 100;
-
-    // 8-9. Sale and items
-    const sale = await createDoc(
-      Sale,
-      {
-        _id: saleId,
-        businessId: ctx.businessId,
-        shopId: ctx.shopId,
-        receiptNumber,
-        ...(input.clientTransactionId ? { clientTransactionId: input.clientTransactionId } : {}),
-        staffId: ctx.userId,
-        customerId: buyer?._id ?? null,
-        itemCount: itemDocs.length,
-        total,
-        totalCost,
-        totalDiscount,
-        paymentMethod: input.paymentMethod,
-        amountPaid: isPart ? input.amountPaid : input.paymentMethod === 'CREDIT' ? 0 : total,
-        paidWith: isPart ? input.paidWith : null,
-        ...dated,
-      },
-      tx
-    );
-    await createDocs(SaleItem, itemDocs, tx);
-
-    // 12. Payment records (Drinvo records the method; it never moves money).
-    // A part payment is two records: the money taken now, and the amount put on credit.
-    const payment = (method, amount) =>
-      createDoc(Payment, { businessId: ctx.businessId, shopId: ctx.shopId, kind: 'SALE', direction: 'IN', method, amount, saleId, customerId: buyer?._id ?? null, recordedBy: ctx.userId, ...dated }, tx);
-    if (isPart) {
-      await payment(input.paidWith, input.amountPaid);
-      await payment('CREDIT', total - input.amountPaid);
-    } else {
-      await payment(input.paymentMethod, total);
-    }
-    if (credit) {
-      await bumpCreditAccount(tx, credit.account._id, { credit: total, paid: isPart ? input.amountPaid : 0 });
-      if (isPart) {
-        await createDoc(
-          CreditPayment,
-          {
-            businessId: ctx.businessId,
-            shopId: ctx.shopId,
-            creditAccountId: credit.account._id,
-            customerId: buyer._id,
-            amount: input.amountPaid,
-            method: input.paidWith,
-            saleId,
-            note: `Paid at sale ${receiptNumber}`,
-            recordedBy: ctx.userId,
-            ...dated,
-          },
-          tx
-        );
-      }
-    }
-
-    await logAudit(
-      ctx,
-      {
-        category: 'sale',
-        action: 'sale.completed',
-        summary: 'completed sale',
-        target: receiptNumber,
-        detail: `${naira(total)} · ${isPart ? `${naira(input.amountPaid)} ${METHOD_LABEL[input.paidWith]} now, ${naira(total - input.amountPaid)} owed` : METHOD_LABEL[input.paymentMethod]}${buyer ? ` · ${buyer.name}` : ''}${totalDiscount > 0 ? ` · ${naira(totalDiscount)} discount` : ''}${occurredAt ? ` · backdated to ${occurredAt.toDateString()}` : ''}`,
-        entityType: 'Sale',
-        entityId: saleId,
-      },
-      tx
-    );
-    return { id: String(sale._id), receiptNumber };
+      const seq = await nextSequence(`receipt:${ctx.shopId}`, tx);
+      const receiptNumber = formatNumber(ctx.business.receiptPrefix || 'INV-', seq);
+      return writeSale(ctx, tx, input, { lines, occurredAt, dated, isPart, saleId: new mongoose.Types.ObjectId(), receiptNumber });
     });
   } catch (err) {
     // Two concurrent retries of the same offline sale can both pass the check above; the
@@ -232,6 +254,79 @@ export async function createSale(ctx, input) {
     }
     throw err;
   }
+}
+
+/**
+ * Edits a completed sale and recalculates everything that came from it. The old sale is reversed
+ * (stock back with its original cost, payments and credit undone, on-demand links released) and
+ * the new details are written through the same path as a new sale, so totals, cost, profit,
+ * payments, credit balances and stock all end up exactly as if it had been rung up this way.
+ * The receipt number, staff and date are kept unless a new date is given.
+ */
+export async function editSale(ctx, saleId, input) {
+  const sale = await Sale.findOne({ _id: saleId, shopId: ctx.shopId });
+  if (!sale) throw ApiError.notFound('Sale not found.');
+  if (sale.status !== 'COMPLETED' || sale.returnedAmount > 0 || sale.refundedAmount > 0) {
+    throw ApiError.conflict('Only sales without returns or refunds can be edited. Process a return instead.');
+  }
+
+  const { lines, isPart } = await prepareSale(ctx, input, { checkStock: false });
+  const occurredAt = input.backdatedAt ?? sale.createdAt;
+  const dated = { createdAt: occurredAt, updatedAt: occurredAt };
+  const oldItems = await SaleItem.find({ saleId: sale._id }).lean();
+
+  return runAtomic(async (tx) => {
+    const fresh = await Sale.findById(sale._id).session(tx.session).lean();
+    if (fresh.status !== 'COMPLETED' || fresh.total !== sale.total) throw ApiError.conflict('This sale has already changed. Refresh and try again.');
+
+    // Put the old stock back at the cost it was taken at
+    for (const i of oldItems) {
+      const variant = await ProductVariant.findById(i.productVariantId).session(tx.session).lean();
+      await applyMovement(ctx, tx, {
+        variant,
+        delta: i.baseQuantity,
+        type: 'SALE_VOID',
+        restockTotal: i.lineCost,
+        ref: { type: 'Sale', id: sale._id, number: sale.receiptNumber },
+        reason: 'Sale edited',
+        date: occurredAt,
+      });
+    }
+
+    // Release on-demand batches this sale had drawn from
+    const batches = await OnDemandPurchase.find({ shopId: ctx.shopId, 'saleLinks.saleId': sale._id }).session(tx.session).lean();
+    for (const b of batches) {
+      const back = b.saleLinks.filter((l) => String(l.saleId) === String(sale._id)).reduce((n, l) => n + l.baseQuantity, 0);
+      const remaining = b.remainingBaseQuantity + back;
+      await OnDemandPurchase.updateOne(
+        { _id: b._id },
+        { $set: { remainingBaseQuantity: remaining, status: remaining >= b.baseQuantity ? 'PURCHASED' : 'PARTIALLY_SOLD', saleLinks: b.saleLinks.filter((l) => String(l.saleId) !== String(sale._id)) } },
+        { session: tx.session }
+      );
+      tx.undo(() => OnDemandPurchase.updateOne({ _id: b._id }, { $set: { remainingBaseQuantity: b.remainingBaseQuantity, status: b.status, saleLinks: b.saleLinks } }));
+    }
+
+    // Undo the old credit, then drop the old items and payment records
+    if (sale.paymentMethod === 'CREDIT' || sale.paymentMethod === 'PART') {
+      const account = sale.customerId ? await CreditAccount.findOne({ shopId: ctx.shopId, customerId: sale.customerId }).session(tx.session) : null;
+      if (account) await bumpCreditAccount(tx, account._id, { credit: -sale.total, paid: sale.paymentMethod === 'PART' ? -sale.amountPaid : 0 });
+    }
+    for (const [Model, filter] of [
+      [SaleItem, { saleId: sale._id }],
+      [Payment, { saleId: sale._id, kind: 'SALE' }],
+      [CreditPayment, { saleId: sale._id }],
+    ]) {
+      const old = await Model.find(filter).session(tx.session).lean();
+      await Model.deleteMany(filter, { session: tx.session });
+      tx.undo(() => (old.length ? Model.collection.insertMany(old) : null));
+    }
+
+    const result = await writeSale(ctx, tx, input, { lines, occurredAt, dated, isPart, saleId: sale._id, receiptNumber: sale.receiptNumber, existing: sale });
+    // Mongoose never lets createdAt change through an update, so move the date directly
+    await Sale.collection.updateOne({ _id: sale._id }, { $set: { createdAt: occurredAt } }, { session: tx.session });
+    tx.undo(() => Sale.collection.updateOne({ _id: sale._id }, { $set: { createdAt: sale.createdAt } }));
+    return result;
+  });
 }
 
 /**
