@@ -55,7 +55,7 @@ function odpView(o) {
 
 /** Creates the catalog entry for a product this shop has never stocked — a minimal variant, with
  * opening stock always 0 (stock only lands once this purchase itself is marked PURCHASED). */
-async function createMinimalVariant(ctx, tx, input) {
+async function createMinimalVariant(ctx, tx, input, unit) {
   const product = await createDoc(
     Product,
     {
@@ -77,6 +77,7 @@ async function createMinimalVariant(ctx, tx, input) {
       size: input.size,
       costPrice: 0,
       sellingPrice: input.sellingPrice,
+      ...(unit !== 'bottle' && input.unitSize ? { unitConversions: { [unit]: input.unitSize } } : {}),
     },
     tx
   );
@@ -96,7 +97,7 @@ export async function createOnDemandPurchase(ctx, input) {
   return runAtomic(async (tx) => {
     let variant;
     if (input.newProduct) {
-      variant = await createMinimalVariant(ctx, tx, input.newProduct);
+      variant = await createMinimalVariant(ctx, tx, input.newProduct, input.unit);
     } else {
       variant = await loadVariant(ctx, input.variantId, { session: tx.session, requireActive: false });
     }

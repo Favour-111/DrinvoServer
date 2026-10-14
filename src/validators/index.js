@@ -220,6 +220,8 @@ const onDemandNewProduct = z.object({
   category: text(60).min(1, 'Choose a category'),
   size: text(40).min(1, 'Enter a size, e.g. 50cl'),
   sellingPrice: money.refine((n) => n > 0, 'Enter a selling price'),
+  // Bottles in one pack/carton/crate — required when the request is in a unit other than bottle
+  unitSize: positiveInt.optional(),
 });
 export const onDemandCreateSchema = z
   .object({
@@ -236,6 +238,7 @@ export const onDemandCreateSchema = z
   })
   .superRefine((v, ctx) => {
     if (!v.variantId && !v.newProduct) ctx.addIssue({ code: 'custom', path: ['variantId'], message: 'Choose a product, or add a new one.' });
+    if (v.newProduct && v.unit !== 'bottle' && !v.newProduct.unitSize) ctx.addIssue({ code: 'custom', path: ['newProduct', 'unitSize'], message: `Enter how many bottles are in one ${v.unit}.` });
     if (v.variantId && v.newProduct) ctx.addIssue({ code: 'custom', path: ['newProduct'], message: 'Choose an existing product or add a new one, not both.' });
   });
 export const onDemandPurchasedSchema = z.object({
