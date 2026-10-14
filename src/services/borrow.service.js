@@ -101,6 +101,7 @@ export async function createBorrowing(ctx, input) {
         type: input.direction === 'LENT' ? 'BORROW_OUT' : 'BORROW_IN',
         ref: { type: 'Borrowing', id: borrowId, number: borrowNumber },
         reason: input.direction === 'LENT' ? `Lent to ${input.counterpartyName}` : `Borrowed from ${input.counterpartyName}`,
+        date: input.occurredAt || null,
       });
 
       items.push({ productVariantId: variant._id, name: variant.name, countedUnits, baseQuantity, returnedBaseQuantity: 0 });
@@ -121,6 +122,7 @@ export async function createBorrowing(ctx, input) {
         notes: input.notes || '',
         status: 'OUTSTANDING',
         createdBy: ctx.userId,
+        ...(input.occurredAt ? { createdAt: input.occurredAt } : {}),
       },
       tx
     );

@@ -24,7 +24,7 @@ async function assertShop(ctx, shopId) {
  * a TRANSFER_OUT / TRANSFER_IN movement on each side — never a generic adjustment, so reporting
  * can tell transfers apart from damage, loss, etc. Transfers never touch sales, revenue or profit.
  */
-export async function createStockTransfer(ctx, { fromShopId, toShopId, items, notes }) {
+export async function createStockTransfer(ctx, { fromShopId, toShopId, items, notes, occurredAt }) {
   if (String(fromShopId) === String(toShopId)) throw ApiError.badRequest('Source and destination shops must be different.');
   const [fromShop, toShop] = await Promise.all([assertShop(ctx, fromShopId), assertShop(ctx, toShopId)]);
 
@@ -35,6 +35,7 @@ export async function createStockTransfer(ctx, { fromShopId, toShopId, items, no
     lines.push({ variant, item, conversion, baseQuantity });
   }
 
+  const date = occurredAt || null;
   const result = await runAtomic(async (tx) => {
     const number = formatNumber('TRF-', await nextSequence(`transfer:${ctx.businessId}`, tx), 6);
     const transferId = new mongoose.Types.ObjectId();
@@ -51,6 +52,7 @@ export async function createStockTransfer(ctx, { fromShopId, toShopId, items, no
         type: 'TRANSFER_OUT',
         ref: { type: 'StockTransfer', id: transferId, number },
         reason: `Transfer to ${toShop.name}`,
+        date,
       });
       // The destination's weighted-average cost blends in at the source's cost basis, exactly
       // like a restock would — the stock's cost doesn't change just because it moved shops.
@@ -61,6 +63,7 @@ export async function createStockTransfer(ctx, { fromShopId, toShopId, items, no
         restockTotal: unitCost * l.baseQuantity,
         ref: { type: 'StockTransfer', id: transferId, number },
         reason: `Transfer from ${fromShop.name}`,
+        date,
       });
     }
 
@@ -83,7 +86,8 @@ export async function createStockTransfer(ctx, { fromShopId, toShopId, items, no
         status: 'COMPLETED',
         notes: notes || '',
         createdBy: ctx.userId,
-        completedAt: new Date(),
+        completedAt: date || new Date(),
+        ...(date ? { createdAt: date } : {}),
       },
       tx
     );

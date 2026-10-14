@@ -150,12 +150,15 @@ export const inventoryListQuery = listQuery.extend({
   status: z.enum(['in', 'low', 'out']).optional(),
   shopId: z.union([objectId, z.literal('all')]).optional(),
 });
+/** Optional "this actually happened on…" date for logging past records. Never in the future. */
+const occurredAt = z.coerce.date().optional().refine((d) => !d || d.getTime() <= Date.now() + 5 * 60 * 1000, 'Date can’t be in the future');
 export const transferSchema = z
   .object({
     fromShopId: objectId,
     toShopId: objectId,
     items: z.array(z.object({ variantId: objectId, unit, quantity: positiveInt })).min(1, 'Add at least one product').max(100),
     notes: optionalText(1000),
+    occurredAt,
   })
   .superRefine((v, ctx) => {
     if (v.fromShopId === v.toShopId) ctx.addIssue({ code: 'custom', path: ['toShopId'], message: 'Source and destination shops must be different.' });
@@ -198,6 +201,7 @@ export const borrowingSchema = z.object({
   items: z.array(borrowItem).min(1, 'Add at least one product'),
   expectedReturnDate: z.coerce.date().optional(),
   notes: optionalText(1000),
+  occurredAt,
 });
 export const borrowReturnSchema = z.object({
   items: z.array(borrowItem).min(1, 'Add at least one product'),
@@ -228,6 +232,7 @@ export const onDemandCreateSchema = z
     sellingPricePerUnit: money.optional(),
     customerName: optionalText(160),
     notes: optionalText(1000),
+    occurredAt,
   })
   .superRefine((v, ctx) => {
     if (!v.variantId && !v.newProduct) ctx.addIssue({ code: 'custom', path: ['variantId'], message: 'Choose a product, or add a new one.' });
@@ -238,6 +243,7 @@ export const onDemandPurchasedSchema = z.object({
   unit,
   unitCost: money.refine((n) => n > 0, 'Enter what it cost'),
   sellingPricePerUnit: money.optional(),
+  occurredAt,
 });
 export const onDemandCancelSchema = z.object({ reason: optionalText(500) });
 export const onDemandListQuery = listQuery.extend({

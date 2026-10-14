@@ -123,6 +123,7 @@ export async function createOnDemandPurchase(ctx, input) {
         notes: input.notes || '',
         status: 'PENDING',
         createdBy: ctx.userId,
+        ...(input.occurredAt ? { createdAt: input.occurredAt } : {}),
       },
       tx
     );
@@ -168,6 +169,7 @@ export async function markOnDemandPurchased(ctx, id, input) {
       restockTotal: totalCost,
       ref: { type: 'OnDemandPurchase', id: odp._id, number: odp.odpNumber },
       reason: `Bought from ${odp.purchasedFrom} for a customer request`,
+      date: input.occurredAt || null,
     });
 
     const patch = {
@@ -179,7 +181,7 @@ export async function markOnDemandPurchased(ctx, id, input) {
       unitCost: unitCostPerBottle,
       totalCost,
       status: 'PURCHASED',
-      purchasedAt: new Date(),
+      purchasedAt: input.occurredAt || new Date(),
     };
     if (input.sellingPricePerUnit) patch.sellingPricePerUnit = input.sellingPricePerUnit;
     await OnDemandPurchase.updateOne({ _id: odp._id }, { $set: patch }, { session: tx.session });
