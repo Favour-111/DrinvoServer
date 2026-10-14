@@ -88,9 +88,6 @@ const variantInput = z
     openingStock: z.object({ quantity: z.coerce.number().int().min(0).max(1_000_000), unit }).optional(),
   })
   .superRefine((v, ctx) => {
-    for (const u of ['pack', 'carton', 'crate']) {
-      if (v.unitConversions[u] === 1) ctx.addIssue({ code: 'custom', path: ['unitConversions', u], message: `A ${u} must hold more than 1 bottle` });
-    }
     if (v.openingStock && v.openingStock.unit !== 'bottle' && !v.unitConversions[v.openingStock.unit]) {
       ctx.addIssue({ code: 'custom', path: ['openingStock', 'unit'], message: `Turn on ${v.openingStock.unit}s first` });
     }
