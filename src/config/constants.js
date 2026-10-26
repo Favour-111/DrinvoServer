@@ -1,6 +1,11 @@
 export const UNITS = ['bottle', 'pack', 'carton', 'crate'];
 export const BASE_UNIT = 'bottle';
 
+// STANDARD products behave exactly as before. MINIATURE products are sold by the bottle, pack and
+// carton, with a pack always holding a whole number of bottles and a carton a whole number of packs.
+export const PACKAGING_TYPES = ['STANDARD', 'MINIATURE'];
+export const MINIATURE_UNITS = ['bottle', 'pack', 'carton'];
+
 // PART = customer pays some now (paidWith) and owes the rest on credit
 export const PAYMENT_METHODS = ['CASH', 'POS', 'TRANSFER', 'CREDIT', 'PART'];
 export const ON_ACCOUNT_METHODS = ['CREDIT', 'PART'];

@@ -21,6 +21,18 @@ const unitPriceSchema = new Schema(
   { _id: false }
 );
 
+// Optional reference purchase cost per larger unit (what the supplier actually charges for a pack or
+// carton). 0 means "bottle cost x conversion". Only a default for the restock form: stock value and
+// profit still come from the cost actually paid on each restock (Inventory.avgCost).
+const unitCostSchema = new Schema(
+  {
+    pack: { ...money },
+    carton: { ...money },
+    crate: { ...money },
+  },
+  { _id: false }
+);
+
 const variantSchema = new Schema(
   {
     businessId: ref('Business', true),
@@ -36,6 +48,7 @@ const variantSchema = new Schema(
     minimumSellingPrice: { ...money, default: 0 },
     unitConversions: { type: conversionSchema, default: () => ({}) },
     unitPrices: { type: unitPriceSchema, default: () => ({}) },
+    unitCosts: { type: unitCostSchema, default: () => ({}) },
     image: { type: String, default: '' },
     lowStockThreshold: { type: Number, default: 0, min: 0 },
     status: { type: String, enum: ['ACTIVE', 'ARCHIVED'], default: 'ACTIVE' },

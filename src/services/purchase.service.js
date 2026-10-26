@@ -23,7 +23,8 @@ export async function createPurchase(ctx, { supplierId, items, notes }) {
   for (const item of items) {
     const variant = await loadVariant(ctx, item.variantId);
     const { conversion, baseQuantity } = toBase(variant, item.unit, item.quantity);
-    const lineTotal = item.quantity * item.costPerUnit;
+    // Total is quantity x cost per purchase unit. It is NOT multiplied by the unit's bottle count again.
+    const lineTotal = Math.round(item.quantity * item.costPerUnit * 100) / 100;
     lines.push({ variant, item, conversion, baseQuantity, lineTotal });
   }
 
@@ -91,7 +92,19 @@ export async function createPurchase(ctx, { supplierId, items, notes }) {
         tx
       );
     }
-    return { id: String(purchase._id), purchaseNumber: number, totalCost };
+    return {
+      id: String(purchase._id),
+      purchaseNumber: number,
+      totalCost,
+      // What each line was bought as, versus what actually went into stock (always bottles)
+      lines: lines.map((l) => ({
+        variantId: String(l.variant._id),
+        unit: l.item.unit,
+        quantity: l.item.quantity,
+        baseQuantity: l.baseQuantity,
+        lineTotal: l.lineTotal,
+      })),
+    };
   });
 }
 

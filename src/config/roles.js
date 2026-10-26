@@ -34,14 +34,11 @@ export const ROLE_PERMISSIONS = {
   STAFF: [
     P.PRODUCT_READ,
     P.INVENTORY_READ,
-    P.INVENTORY_TRANSFER,
-    P.STOCK_COUNT,
-    P.BORROW_MANAGE,
-    P.ON_DEMAND_PURCHASE,
     P.SALE_CREATE,
     P.SALE_READ_OWN,
+    // Staff can look a customer up to attach a sale to them, but cannot take payments against credit,
+    // count stock, move stock, lend/borrow or place on-demand purchases (admin-only).
     P.CUSTOMER_LOOKUP,
-    P.CREDIT_PAYMENT_RECORD,
   ],
 };
 

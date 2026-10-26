@@ -1,8 +1,9 @@
-import { CreditAccount, CreditPayment, InventoryMovement, ProductVariant, Refund, Return, Sale, SaleItem } from '../models/index.js';
+import { CreditAccount, CreditPayment, Inventory, InventoryMovement, Product, ProductVariant, Refund, Return, Shop, Sale, SaleItem, Supplier, PurchaseItem } from '../models/index.js';
 import { MOVEMENT_TYPES } from '../config/constants.js';
 import { resolveRange } from '../utils/dates.js';
-import { stockRows, summarize } from './inventory.service.js';
+import { stockRows, summarize, summarizeMiniature } from './inventory.service.js';
 import { creditBalance } from './customer.service.js';
+import { listAudit } from './audit.service.js';
 
 const round2 = (n) => Math.round((n || 0) * 100) / 100;
 const notVoided = { $ne: ['$status', 'VOIDED'] };
@@ -39,6 +40,53 @@ async function saleTotals(ctx, start, end, extra = {}) {
     unitsSold: u?.units || 0,
     averageSale: transactions ? round2(revenue / transactions) : 0,
   };
+}
+
+/**
+ * Miniature sales for the period, from the sale lines (net of returns). `bottles` is the quantity
+ * actually deducted from stock; `byUnit` keeps what customers bought (e.g. 3 packs, not 36 bottles).
+ * These are a subset of the overall totals, not an addition to them.
+ */
+async function miniatureSales(ctx, start, end) {
+  const rows = await SaleItem.aggregate([
+    { $match: { shopId: ctx.shopId, createdAt: { $gte: start, $lt: end }, voided: false, packagingType: 'MINIATURE' } },
+    {
+      $group: {
+        _id: '$unit',
+        quantity: { $sum: { $subtract: ['$quantity', '$returnedQuantity'] } },
+        bottles: { $sum: { $subtract: ['$baseQuantity', '$returnedBaseQuantity'] } },
+        revenue: { $sum: { $subtract: ['$lineTotal', '$returnedAmount'] } },
+        cost: { $sum: { $subtract: ['$lineCost', '$returnedCost'] } },
+      },
+    },
+  ]);
+  const byUnit = { bottle: 0, pack: 0, carton: 0 };
+  let bottles = 0;
+  let revenue = 0;
+  let cost = 0;
+  for (const r of rows) {
+    if (r._id in byUnit) byUnit[r._id] = r.quantity;
+    bottles += r.bottles;
+    revenue += r.revenue;
+    cost += r.cost;
+  }
+  return { byUnit, bottlesSold: bottles, revenue: round2(revenue), cost: round2(cost), grossProfit: round2(revenue - cost) };
+}
+
+/** Miniature stock in every active shop, so branches can be compared. Admin-only (see the report routes). */
+async function miniatureStockByShop(ctx) {
+  const [shops, products] = await Promise.all([
+    Shop.find({ businessId: ctx.businessId, isActive: true }).sort({ createdAt: 1, _id: 1 }).lean(),
+    Product.find({ businessId: ctx.businessId, status: 'ACTIVE', packagingType: 'MINIATURE' }, '_id').lean(),
+  ]);
+  if (!products.length) return [];
+  const variants = await ProductVariant.find({ productId: { $in: products.map((p) => p._id) }, status: 'ACTIVE' }, '_id').lean();
+  const stock = await Inventory.aggregate([
+    { $match: { shopId: { $in: shops.map((s) => s._id) }, productVariantId: { $in: variants.map((v) => v._id) } } },
+    { $group: { _id: '$shopId', bottles: { $sum: '$quantity' }, value: { $sum: { $multiply: ['$quantity', '$avgCost'] } } } },
+  ]);
+  const byShop = new Map(stock.map((x) => [String(x._id), x]));
+  return shops.map((s) => ({ shopId: String(s._id), shopName: s.name, bottles: byShop.get(String(s._id))?.bottles || 0, inventoryValue: round2(byShop.get(String(s._id))?.value) }));
 }
 
 async function series(ctx, r) {
@@ -105,6 +153,46 @@ function categoryShare(products) {
     .sort((a, b) => b.revenue - a.revenue);
 }
 
+/** The best-selling drinks by revenue, each with its share of all sales in the period. */
+function topSellers(products, limit = 4) {
+  const revenue = round2(products.reduce((s, p) => s + p.revenue, 0));
+  const cost = round2(products.reduce((s, p) => s + p.cost, 0));
+  const share = (amount) => (revenue ? round2((amount / revenue) * 100) : 0);
+  const top = products.slice(0, limit);
+  const rest = products.slice(limit);
+  return {
+    revenue,
+    margin: revenue ? round2(((revenue - cost) / revenue) * 100) : 0,
+    items: top.map((p) => ({ variantId: p.variantId, name: p.name, unitsSold: p.unitsSold, revenue: p.revenue, share: share(p.revenue) })),
+    others: { count: rest.length, share: share(rest.reduce((s, p) => s + p.revenue, 0)) },
+  };
+}
+
+/** The latest restocked lines (newest first), with the product look-alike fields the thumbnails need. */
+async function recentRestocks(ctx, rows, limit = 6) {
+  const items = await PurchaseItem.find({ shopId: ctx.shopId }).sort({ createdAt: -1 }).limit(limit).lean();
+  if (!items.length) return [];
+  const suppliers = await Supplier.find({ _id: { $in: items.map((i) => i.supplierId) } }, 'name').lean();
+  const supplierName = new Map(suppliers.map((x) => [String(x._id), x.name]));
+  const byVariant = new Map(rows.map((r) => [String(r.variantId), r]));
+  return items.map((i) => {
+    const v = byVariant.get(String(i.productVariantId));
+    return {
+      id: String(i._id),
+      variantId: String(i.productVariantId),
+      name: v?.name || 'Archived product',
+      color: v?.color,
+      shape: v?.shape,
+      image: v?.image,
+      unit: i.unit,
+      quantity: i.quantity,
+      total: round2(i.lineTotal),
+      supplier: supplierName.get(String(i.supplierId)) || '',
+      createdAt: i.createdAt,
+    };
+  });
+}
+
 /** Money actually taken in within [start, end), including part/credit payments collected
  * today against sales made on earlier days — distinct from `saleTotals().revenue`, which
  * books a credit sale's full amount on the day the sale happened, not when it's paid off. */
@@ -123,7 +211,7 @@ async function creditOutstanding(ctx) {
 
 export async function summary(ctx, query) {
   const r = resolveRange(query, ctx.business.timezone);
-  const [totals, points, products, returns, refunds, payments, outstanding] = await Promise.all([
+  const [totals, points, products, returns, refunds, payments, outstanding, miniature, miniatureStock, miniatureByShop] = await Promise.all([
     saleTotals(ctx, r.start, r.end),
     series(ctx, r),
     productProfitability(ctx, r.start, r.end),
@@ -137,6 +225,9 @@ export async function summary(ctx, query) {
       { $group: { _id: '$paymentMethod', amount: { $sum: NET_REVENUE }, count: { $sum: 1 } } },
     ]),
     creditOutstanding(ctx),
+    miniatureSales(ctx, r.start, r.end),
+    stockRows(ctx).then(summarizeMiniature),
+    miniatureStockByShop(ctx),
   ]);
   const payTotal = payments.reduce((s, p) => s + p.amount, 0);
   return {
@@ -155,6 +246,7 @@ export async function summary(ctx, query) {
     }),
     products,
     categories: categoryShare(products),
+    miniature: { ...miniature, stock: miniatureStock, byShop: miniatureByShop },
   };
 }
 
@@ -164,9 +256,10 @@ export async function dashboard(ctx, query) {
   const today = resolveRange({ range: 'today' }, tz);
   const yesterday = resolveRange({ range: 'yesterday' }, tz);
   const chartRange = resolveRange(query.range ? query : { range: '7d' }, tz);
+  const last30 = resolveRange({ range: '30d' }, tz);
 
   // Everything runs in parallel: one database round trip for the whole page (plus sale lines)
-  const [todayTotals, yesterdayTotals, todayCollected, yesterdayCollected, points, chartTotals, rows, recentSales] = await Promise.all([
+  const [todayTotals, yesterdayTotals, todayCollected, yesterdayCollected, points, chartTotals, rows, recentSales, todayMiniature, products30, activity] = await Promise.all([
     saleTotals(ctx, today.start, today.end),
     saleTotals(ctx, yesterday.start, yesterday.end),
     creditCollected(ctx, today.start, today.end),
@@ -175,14 +268,23 @@ export async function dashboard(ctx, query) {
     saleTotals(ctx, chartRange.start, chartRange.end),
     stockRows(ctx),
     Sale.find({ shopId: ctx.shopId }).sort({ createdAt: -1 }).limit(6).populate('staffId', 'name color').populate('customerId', 'name phone').lean(),
+    miniatureSales(ctx, today.start, today.end),
+    productProfitability(ctx, last30.start, last30.end),
+    listAudit(ctx, { limit: 6 }),
   ]);
+  const restocks = await recentRestocks(ctx, rows);
   const saleItems = await SaleItem.find({ saleId: { $in: recentSales.map((s) => s._id) } }, 'saleId variantName unit quantity').lean();
 
   return {
     today: { ...todayTotals, cashCollected: todayCollected },
     yesterday: { ...yesterdayTotals, cashCollected: yesterdayCollected },
     inventory: summarize(rows),
+    miniature: { today: todayMiniature, stock: summarizeMiniature(rows) },
     chart: { range: chartRange.range, granularity: chartRange.granularity, points, totals: chartTotals },
+    topSellers: topSellers(products30),
+    stockHealth: rows.map((r) => ({ variantId: r.variantId, name: r.name, status: r.status })),
+    recentActivity: activity.items,
+    recentRestocks: restocks,
     lowStock: rows.filter((r) => r.status === 'low').sort((a, b) => a.quantity / (a.lowStockThreshold || 1) - b.quantity / (b.lowStockThreshold || 1)),
     outOfStock: rows.filter((r) => r.status === 'out'),
     recentSales: recentSales.map((s) => ({

@@ -1,7 +1,7 @@
 import { Business, Inventory, Product, ProductVariant, Shop, Supplier } from '../models/index.js';
 import { ApiError } from '../utils/ApiError.js';
 import { createDoc, runAtomic, updateDoc } from '../utils/atomic.js';
-import { toBase } from '../utils/units.js';
+import { miniatureConversionError, toBase } from '../utils/units.js';
 import { applyMovement, listMovements, stockRows } from './inventory.service.js';
 import { logAudit } from './audit.service.js';
 
@@ -39,7 +39,7 @@ export async function getProduct(ctx, id, { withHistory }) {
   const variants = await stockRows(ctx, { includeArchived: true, productIds: [product._id] });
   const supplier = product.supplierId ? await Supplier.findById(product.supplierId, 'name').lean() : null;
   const result = {
-    product: { ...product, id: String(product._id), supplier: supplier ? { id: String(supplier._id), name: supplier.name } : null },
+    product: { ...product, packagingType: product.packagingType || 'STANDARD', id: String(product._id), supplier: supplier ? { id: String(supplier._id), name: supplier.name } : null },
     variants,
   };
   if (withHistory && variants.length) {
@@ -63,9 +63,19 @@ function variantDoc(ctx, product, v) {
     minimumSellingPrice: v.minimumSellingPrice || 0,
     unitConversions: { bottle: 1, ...v.unitConversions },
     unitPrices: v.unitPrices,
+    unitCosts: v.unitCosts,
     lowStockThreshold: v.lowStockThreshold,
     image: v.image || '',
   };
+}
+
+/** Defence in depth: the route validator checks this too, but stock-affecting setup is enforced here as well. */
+function assertMiniaturePackaging(packagingType, variants = []) {
+  if (packagingType !== 'MINIATURE') return;
+  for (const v of variants) {
+    const message = miniatureConversionError(v.unitConversions);
+    if (message) throw ApiError.badRequest(`${v.size}: ${message}`, { fields: { variants: message } });
+  }
 }
 
 async function assertSupplier(ctx, supplierId) {
@@ -99,6 +109,7 @@ async function setUpStock(ctx, tx, variant, openingStock) {
 
 export async function createProduct(ctx, input) {
   await assertSupplier(ctx, input.supplierId);
+  assertMiniaturePackaging(input.packagingType, input.variants);
   const sizes = input.variants.map((v) => v.size.toLowerCase());
   if (new Set(sizes).size !== sizes.length) throw ApiError.badRequest('Each size must be different.');
 
@@ -115,6 +126,7 @@ export async function createProduct(ctx, input) {
         color: input.color || CATEGORY_COLORS[input.category] || '#059669',
         shape: input.shape || 'bottle',
         supplierId: input.supplierId || null,
+        packagingType: input.packagingType || 'STANDARD',
       },
       tx
     );
@@ -129,7 +141,7 @@ export async function createProduct(ctx, input) {
         action: 'product.created',
         summary: 'added product',
         target: product.name,
-        detail: input.variants.map((v) => v.size).join(', '),
+        detail: `${input.packagingType === 'MINIATURE' ? 'Miniature · ' : ''}${input.variants.map((v) => v.size).join(', ')}`,
         entityType: 'Product',
         entityId: product._id,
       },
@@ -144,12 +156,40 @@ export async function updateProduct(ctx, id, input) {
   if (!product) throw ApiError.notFound('Product not found.');
   if (input.supplierId !== undefined) await assertSupplier(ctx, input.supplierId);
 
+  // A miniature's sizes must all have a consistent pack/carton setup, including sizes this request
+  // doesn't resend (e.g. an existing product being switched to Miniature without touching its sizes).
+  const packagingType = input.packagingType ?? product.packagingType ?? 'STANDARD';
+  assertMiniaturePackaging(packagingType, input.variants);
+  if (packagingType === 'MINIATURE' && (input.packagingType !== undefined || input.variants)) {
+    const sent = new Set((input.variants || []).map((v) => v.id).filter(Boolean));
+    const stored = await ProductVariant.find({ productId: product._id }).lean();
+    for (const sv of stored.filter((x) => !sent.has(String(x._id)))) {
+      const message = miniatureConversionError(sv.unitConversions);
+      if (message) throw ApiError.badRequest(`${sv.name}: ${message}`);
+    }
+  }
+
   return runAtomic(async (tx) => {
-    const fields = ['name', 'brand', 'category', 'description', 'image', 'color', 'shape', 'supplierId'];
+    const fields = ['name', 'brand', 'category', 'description', 'image', 'color', 'shape', 'supplierId', 'packagingType'];
     const $set = {};
     for (const f of fields) if (input[f] !== undefined) $set[f] = input[f];
     const updated = Object.keys($set).length ? await updateDoc(Product, product, { $set }, tx) : product;
     const renamed = input.name && input.name !== product.name;
+    if (input.packagingType !== undefined && input.packagingType !== (product.packagingType || 'STANDARD')) {
+      await logAudit(
+        ctx,
+        {
+          category: 'product',
+          action: 'product.packaging_type_changed',
+          summary: 'changed packaging type',
+          target: product.name,
+          detail: `${product.packagingType || 'STANDARD'} → ${input.packagingType} · stock quantities are unchanged`,
+          entityType: 'Product',
+          entityId: product._id,
+        },
+        tx
+      );
+    }
 
     const existing = await ProductVariant.find({ productId: product._id }).session(tx.session);
     if (renamed) {
@@ -182,6 +222,27 @@ export async function updateProduct(ctx, id, input) {
           );
           // Only reset the average cost where there is no stock to average against
           await Inventory.updateMany({ productVariantId: current._id, quantity: 0 }, { $set: { avgCost: v.costPrice } }, { session: tx.session });
+        }
+        // Stock is kept in bottles, so re-packing never changes how many bottles are on hand; it only
+        // changes how that stock is described and how new sales/purchases convert. Recorded for audit.
+        const before = current.unitConversions || {};
+        const after = v.unitConversions || {};
+        const changedUnits = ['pack', 'carton', 'crate'].filter((u) => (before[u] || 0) !== (after[u] || 0));
+        if (changedUnits.length) {
+          const onHand = await Inventory.aggregate([{ $match: { productVariantId: current._id } }, { $group: { _id: null, q: { $sum: '$quantity' } } }]).session(tx.session);
+          await logAudit(
+            ctx,
+            {
+              category: 'product',
+              action: 'product.packaging_changed',
+              summary: 'changed packaging',
+              target: doc.name,
+              detail: `${changedUnits.map((u) => `1 ${u} = ${before[u] || 0} → ${after[u] || 0} bottles`).join(', ')} · ${onHand[0]?.q || 0} bottles in stock unchanged`,
+              entityType: 'ProductVariant',
+              entityId: current._id,
+            },
+            tx
+          );
         }
         if ((current.minimumSellingPrice || 0) !== (v.minimumSellingPrice || 0)) {
           await logAudit(

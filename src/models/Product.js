@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { Schema, baseOptions, ref } from './_base.js';
+import { PACKAGING_TYPES } from '../config/constants.js';
 
 const productSchema = new Schema(
   {
@@ -12,6 +13,8 @@ const productSchema = new Schema(
     color: { type: String, default: '#059669' },
     shape: { type: String, enum: ['bottle', 'can', 'box'], default: 'bottle' },
     supplierId: ref('Supplier'),
+    // Products created before this field existed read as STANDARD (see packagingOf in utils/units.js)
+    packagingType: { type: String, enum: PACKAGING_TYPES, default: 'STANDARD' },
     status: { type: String, enum: ['ACTIVE', 'ARCHIVED'], default: 'ACTIVE', index: true },
     archivedAt: Date,
   },

@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { Schema, baseOptions, ref, money } from './_base.js';
-import { UNITS } from '../config/constants.js';
+import { PACKAGING_TYPES, UNITS } from '../config/constants.js';
 
 /** One line of a sale. Names, prices and cost are snapshots taken at sale time. */
 const saleItemSchema = new Schema(
@@ -13,6 +13,8 @@ const saleItemSchema = new Schema(
     productName: { type: String, required: true },
     variantName: { type: String, required: true },
     category: { type: String, default: '' },
+    // Snapshot of the product's packaging type at sale time, so reports on miniature sales never shift
+    packagingType: { type: String, enum: PACKAGING_TYPES, default: 'STANDARD' },
     unit: { type: String, enum: UNITS, required: true },
     quantity: { type: Number, required: true, min: 1 },
     conversion: { type: Number, required: true, min: 1 },

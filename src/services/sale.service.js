@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { CreditAccount, CreditPayment, Customer, Inventory, OnDemandPurchase, Payment, ProductVariant, Refund, Return, ReturnItem, Sale, SaleItem } from '../models/index.js';
 import { ApiError } from '../utils/ApiError.js';
 import { createDoc, createDocs, runAtomic, updateDoc } from '../utils/atomic.js';
-import { describeStock, minimumFor, priceFor, toBase } from '../utils/units.js';
+import { describeStock, minimumFor, packagingOf, priceFor, toBase } from '../utils/units.js';
 import { formatNumber, nextSequence } from '../utils/sequence.js';
 import { resolveRange } from '../utils/dates.js';
 import { escapeRegex, pageParams } from '../utils/serialize.js';
@@ -123,6 +123,7 @@ async function writeSale(ctx, tx, input, { lines, occurredAt, dated, isPart, sal
       productName: l.variant.product.name,
       variantName: l.variant.name,
       category: l.variant.product.category,
+      packagingType: packagingOf(l.variant),
       unit: l.item.unit,
       quantity: l.item.quantity,
       conversion: l.conversion,
@@ -392,6 +393,7 @@ function saleView(s, items = []) {
       productName: i.productName,
       variantName: i.variantName,
       category: i.category,
+      packagingType: i.packagingType || 'STANDARD',
       unit: i.unit,
       quantity: i.quantity,
       conversion: i.conversion,

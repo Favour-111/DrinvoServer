@@ -9,7 +9,9 @@
     "dev": "nodemon --watch src --watch server.js server.js",
     "start": "node server.js",
     "seed": "node scripts/seed.js",
-    "db:dev": "sh scripts/dev-db.sh"
+    "db:dev": "sh scripts/dev-db.sh",
+    "migrate:miniature": "node scripts/migrate-miniature.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "engines": {
     "node": ">=18.18"

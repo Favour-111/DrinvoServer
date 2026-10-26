@@ -11,7 +11,7 @@ import { ADJUSTMENT_TYPES } from '../config/constants.js';
 import { can, P } from '../config/roles.js';
 import { ApiError } from '../utils/ApiError.js';
 import { createDoc, runAtomic } from '../utils/atomic.js';
-import { describeStock, toBase } from '../utils/units.js';
+import { breakdownStock, describeStock, miniatureLayout, packagingOf, toBase } from '../utils/units.js';
 import { formatNumber, nextSequence } from '../utils/sequence.js';
 import { escapeRegex, pageParams } from '../utils/serialize.js';
 import { logAudit } from './audit.service.js';
@@ -192,6 +192,8 @@ export async function stockRows(ctx, { includeArchived = false, q, category, sta
       minimumSellingPrice: v.minimumSellingPrice || 0,
       unitConversions: { bottle: 1, pack: v.unitConversions?.pack || 0, carton: v.unitConversions?.carton || 0, crate: v.unitConversions?.crate || 0 },
       unitPrices: { pack: v.unitPrices?.pack || 0, carton: v.unitPrices?.carton || 0, crate: v.unitPrices?.crate || 0 },
+      unitCosts: { pack: v.unitCosts?.pack || 0, carton: v.unitCosts?.carton || 0, crate: v.unitCosts?.crate || 0 },
+      ...packagingFields(p, v, quantity),
       quantity,
       lowStockThreshold: threshold,
       inventoryValue: round2(quantity * avgCost),
@@ -203,6 +205,27 @@ export async function stockRows(ctx, { includeArchived = false, q, category, sta
   return rows;
 }
 
+/**
+ * Packaging details shown next to a variant's stock. Everything here is derived from the single
+ * bottle balance (nothing extra is stored), so bottle, pack and carton figures can never disagree.
+ */
+function packagingFields(product, variant, quantity) {
+  const packagingType = packagingOf({ packagingType: product.packagingType });
+  const miniature = packagingType === 'MINIATURE';
+  const view = { packagingType, isMiniature: miniature };
+  if (!miniature) return view;
+  const withType = { ...variant, packagingType };
+  const layout = miniatureLayout(withType);
+  return {
+    ...view,
+    ...(layout || {}),
+    stockBreakdown: breakdownStock(withType, quantity),
+    // Whole packs (any cartons included) plus leftover bottles, e.g. 686 bottles = 57 packs + 2 bottles
+    stockInPacks: layout ? { packs: Math.floor(quantity / layout.bottlesPerPack), bottles: quantity % layout.bottlesPerPack } : null,
+    stockText: describeStock(withType, quantity),
+  };
+}
+
 export function summarize(rows) {
   const live = rows.filter((r) => r.status !== 'archived');
   return {
@@ -212,6 +235,24 @@ export function summarize(rows) {
     lowStock: live.filter((r) => r.status === 'low').length,
     outOfStock: live.filter((r) => r.status === 'out').length,
     inventoryValue: round2(live.reduce((s, r) => s + r.inventoryValue, 0)),
+    miniature: summarizeMiniature(live),
+  };
+}
+
+/** Miniature stock on its own, so it can be reported next to (and never double-counted with) the totals. */
+export function summarizeMiniature(rows) {
+  const mini = rows.filter((r) => r.isMiniature && r.status !== 'archived');
+  const totalBottles = mini.reduce((s, r) => s + r.quantity, 0);
+  return {
+    variantCount: mini.length,
+    totalBottles,
+    // Sum of each product's own breakdown, since pack and carton sizes can differ between products
+    cartons: mini.reduce((s, r) => s + (r.stockBreakdown?.carton || 0), 0),
+    packs: mini.reduce((s, r) => s + (r.stockBreakdown?.pack || 0), 0),
+    looseBottles: mini.reduce((s, r) => s + (r.stockBreakdown?.bottle || 0), 0),
+    lowStock: mini.filter((r) => r.status === 'low').length,
+    outOfStock: mini.filter((r) => r.status === 'out').length,
+    inventoryValue: round2(mini.reduce((s, r) => s + r.inventoryValue, 0)),
   };
 }
 

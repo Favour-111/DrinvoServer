@@ -12,6 +12,7 @@ const COST_FIELDS = new Set([
   'margin',
   'inventoryValue',
   'costPerUnit',
+  'unitCosts',
   'costPerBase',
   'cost',
   'grossProfit',

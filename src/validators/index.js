@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { objectId, money, positiveInt, unit, text, optionalText, phone, listQuery } from './common.js';
-import { ADJUSTMENT_TYPES, PAYMENT_METHODS, REFUND_METHODS } from '../config/constants.js';
+import { ADJUSTMENT_TYPES, PACKAGING_TYPES, PAYMENT_METHODS, REFUND_METHODS } from '../config/constants.js';
+import { miniatureConversionError } from '../utils/units.js';
 import { ROLES } from '../config/roles.js';
 
 export * from './common.js';
@@ -74,6 +75,11 @@ const unitPriceSchema = z.object({
   carton: money.default(0),
   crate: money.default(0),
 });
+const unitCostSchema = z.object({
+  pack: money.default(0),
+  carton: money.default(0),
+  crate: money.default(0),
+});
 const variantInput = z
   .object({
     id: objectId.optional(),
@@ -83,6 +89,7 @@ const variantInput = z
     minimumSellingPrice: money.default(0),
     unitConversions: conversionSchema.default({}),
     unitPrices: unitPriceSchema.default({}),
+    unitCosts: unitCostSchema.default({}),
     lowStockThreshold: z.coerce.number().int().min(0).default(0),
     image: imageUrl,
     openingStock: z.object({ quantity: z.coerce.number().int().min(0).max(1_000_000), unit }).optional(),
@@ -96,7 +103,7 @@ const variantInput = z
     }
   });
 
-export const productCreateSchema = z.object({
+const productBase = z.object({
   name: text(120).min(1, 'Enter a product name'),
   brand: optionalText(120),
   category: text(60).min(1, 'Choose a category'),
@@ -105,11 +112,23 @@ export const productCreateSchema = z.object({
   color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
   shape: z.enum(['bottle', 'can', 'box']).optional(),
   supplierId: objectId.nullable().optional().or(z.literal('').transform(() => null)),
+  packagingType: z.enum(PACKAGING_TYPES).default('STANDARD'),
   variants: z.array(variantInput).min(1, 'Add at least one size').max(20),
 });
-export const productUpdateSchema = productCreateSchema.partial().extend({
-  variants: z.array(variantInput).min(1).max(20).optional(),
-});
+/** A miniature's pack and carton quantities must be whole and consistent (carton = N packs). */
+function checkMiniatureVariants(v, ctx) {
+  if (v.packagingType !== 'MINIATURE') return;
+  (v.variants || []).forEach((variant, i) => {
+    const message = miniatureConversionError(variant.unitConversions);
+    if (message) ctx.addIssue({ code: 'custom', path: ['variants', i, 'unitConversions'], message });
+  });
+}
+export const productCreateSchema = productBase.superRefine(checkMiniatureVariants);
+// On update, packagingType is only touched when sent; the service re-checks sizes it isn't sent.
+export const productUpdateSchema = productBase
+  .partial()
+  .extend({ variants: z.array(variantInput).min(1).max(20).optional() })
+  .superRefine(checkMiniatureVariants);
 export const productListQuery = listQuery.extend({
   category: z.string().trim().max(60).optional(),
   status: z.enum(['ACTIVE', 'ARCHIVED']).optional(),
